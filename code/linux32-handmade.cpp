@@ -97,24 +97,24 @@ int main() {
                     XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
                     XCB_CW_EVENT_MASK, &events);
 
-  xcb_intern_atom_cookie_t wm_protocols_cookie =
+  xcb_intern_atom_cookie_t wmProtocolsCookie =
       xcb_intern_atom(conn, 0, strlen("WM_PROTOCOLS"), "WM_PROTOCOLS");
-  xcb_intern_atom_cookie_t wm_delete_cookie =
+  xcb_intern_atom_cookie_t wmDeleteCookie =
       xcb_intern_atom(conn, 0, strlen("WM_DELETE_WINDOW"), "WM_DELETE_WINDOW");
 
-  xcb_intern_atom_reply_t *wm_protocols_reply =
-      xcb_intern_atom_reply(conn, wm_protocols_cookie, NULL);
-  xcb_intern_atom_reply_t *wm_delete_reply =
-      xcb_intern_atom_reply(conn, wm_delete_cookie, NULL);
+  xcb_intern_atom_reply_t *wmProtocolsReply =
+      xcb_intern_atom_reply(conn, wmProtocolsCookie, NULL);
+  xcb_intern_atom_reply_t *wmDeleteReply =
+      xcb_intern_atom_reply(conn, wmDeleteCookie, NULL);
 
-  xcb_atom_t wm_protocols = wm_protocols_reply->atom;
-  xcb_atom_t wm_delete_window = wm_delete_reply->atom;
+  xcb_atom_t wmProtocols = wmProtocolsReply->atom;
+  xcb_atom_t wmDeleteWindow = wmDeleteReply->atom;
 
-  free(wm_protocols_reply);
-  free(wm_delete_reply);
+  free(wmProtocolsReply);
+  free(wmDeleteReply);
 
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, wm_protocols, 4, 32,
-                      1, &wm_delete_window);
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, wmProtocols, 4, 32,
+                      1, &wmDeleteWindow);
 
   const char *title = "handmade hero";
 
@@ -130,7 +130,7 @@ int main() {
 
   running = true;
   while (running) {
-    xGetEvents(conn, window, screen, wm_protocols, wm_delete_window);
+    xGetEvents(conn, window, screen, wmProtocols, wmDeleteWindow);
   }
 
   xcb_disconnect(conn);
