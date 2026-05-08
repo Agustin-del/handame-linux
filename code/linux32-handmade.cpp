@@ -61,8 +61,7 @@ void xGetEvents(xcb_connection_t *conn, xcb_window_t window,
   case XCB_EXPOSE: {
     xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
     if (ee->count == 0) {
-      xUpdateWindow(conn, ee->window, screen, backBufferWidth,
-                    backBufferHeight);
+      xUpdateWindow(conn, ee->window, screen, backBufferWidth, backBufferHeight);
     }
   } break;
   case XCB_CONFIGURE_NOTIFY: {
