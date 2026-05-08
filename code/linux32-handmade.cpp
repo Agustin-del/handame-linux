@@ -5,8 +5,53 @@
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
-int getEvents(xcb_connection_t *conn, xcb_window_t window, xcb_screen_t *screen,
-              xcb_atom_t ct, uint32_t md) {
+#define internal static
+#define local_persist static
+#define global_variable static
+
+global_variable bool running;
+global_variable void *bitMapMemory;
+global_variable xcb_gcontext_t gContext;
+global_variable uint16_t backBufferWidth;
+global_variable uint16_t backBufferHeight;
+
+internal void xUpdateWindow(xcb_connection_t *conn, xcb_window_t window,
+                            xcb_screen_t *screen, uint16_t width,
+                            uint16_t height) {
+  uint32_t data_len = width * height * 4;
+  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext, width,
+                height, 0, 0, 0, screen->root_depth, data_len,
+                (const uint8_t *)bitMapMemory);
+
+  xcb_flush(conn);
+}
+
+internal void xResizeBackBuffer(uint16_t width, uint16_t height) {
+  if (bitMapMemory) {
+    free(bitMapMemory);
+  }
+
+  backBufferWidth = width;
+  backBufferHeight = height;
+
+  bitMapMemory = malloc(backBufferWidth * backBufferHeight * 4);
+  if (!bitMapMemory) {
+    printf("error alocando el backbuffer");
+    return;
+  }
+#if 0
+  uint32_t *pixel = (uint32_t *)bitMapMemory;
+  for (uint32_t y = 0; y < height; ++y) {
+    for (uint32_t x = 0; x < width; ++x) {
+      *pixel++ = 0x00FF00FF;
+    }
+  }
+
+#endif
+}
+
+void xGetEvents(xcb_connection_t *conn, xcb_window_t window,
+                xcb_screen_t *screen, xcb_atom_t ct, uint32_t md) {
   xcb_generic_event_t *event = xcb_wait_for_event(conn);
   switch (event->response_type & ~0x80) {
   case XCB_FOCUS_IN: {
@@ -16,36 +61,25 @@ int getEvents(xcb_connection_t *conn, xcb_window_t window, xcb_screen_t *screen,
   case XCB_EXPOSE: {
     xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
     if (ee->count == 0) {
-      xcb_gcontext_t ctx = xcb_generate_id(conn);
-      static uint32_t color = screen->white_pixel;
-      if (color == screen->white_pixel) {
-        color = screen->black_pixel;
-      } else {
-        color = screen->white_pixel;
-      }
-      xcb_create_gc(conn, ctx, window, XCB_GC_FOREGROUND, &color);
-      xcb_rectangle_t rec = {0, 0, screen->height_in_pixels,
-                             screen->width_in_pixels};
-      xcb_poly_fill_rectangle(conn, window, ctx, 1, &rec);
-      xcb_flush(conn);
+      xUpdateWindow(conn, ee->window, screen, backBufferWidth,
+                    backBufferHeight);
     }
   } break;
   case XCB_CONFIGURE_NOTIFY: {
+    xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)event;
+    xResizeBackBuffer(cn->width, cn->height);
   } break;
-  case XCB_DESTROY_NOTIFY: {
-  }
   case XCB_CLIENT_MESSAGE: {
     xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
     if (cm->type == ct && cm->data.data32[0] == md) {
-      return 0;
+      running = false;
     }
-  }
+  } break;
   default: {
 
   } break;
   }
   free(event);
-  return 1;
 }
 
 int main() {
@@ -77,6 +111,9 @@ int main() {
   xcb_atom_t wm_protocols = wm_protocols_reply->atom;
   xcb_atom_t wm_delete_window = wm_delete_reply->atom;
 
+  free(wm_protocols_reply);
+  free(wm_delete_reply);
+
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, wm_protocols, 4, 32,
                       1, &wm_delete_window);
 
@@ -85,15 +122,16 @@ int main() {
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, XCB_ATOM_WM_NAME,
                       XCB_ATOM_STRING, 8, strlen(title), title);
 
+  gContext = xcb_generate_id(conn);
+  uint32_t values = screen->black_pixel;
+  xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND, &values);
+
   xcb_map_window(conn, window);
   xcb_flush(conn);
 
-  for (;;) {
-    int event_result =
-        getEvents(conn, window, screen, wm_protocols, wm_delete_window);
-    if (!event_result) {
-      break;
-    }
+  running = true;
+  while (running) {
+    xGetEvents(conn, window, screen, wm_protocols, wm_delete_window);
   }
 
   xcb_disconnect(conn);
