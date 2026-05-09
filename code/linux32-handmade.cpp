@@ -20,54 +20,77 @@ typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef uint64_t uint64;
 
-global_variable bool running;
-global_variable void *bitMapMemory;
-global_variable xcb_gcontext_t gContext;
-global_variable uint16 bitMapWidth;
-global_variable uint16 bitMapHeight;
-global_variable int bytesPerPixel = 4;
+// THINK: quizas no quiero el graphic context, no lo se
 
-internal void renderWeirdGradient(int xOffset, int yOffset) {
-  int pitch = bitMapWidth * bytesPerPixel;
-  uint8 *row = (uint8 *)bitMapMemory;
-  for (int y = 0; y < bitMapHeight; ++y) {
+struct linux32_offscreen_buffer {
+  void *memory;
+  uint16 width;
+  uint16 height;
+  int bytesPerPixel;
+  int pitch;
+};
+
+global_variable bool running;
+global_variable linux32_offscreen_buffer globalBackbuffer;
+
+internal xcb_atom_t GetInternAtom(xcb_connection_t *conn, const char *name) {
+  xcb_intern_atom_cookie_t cookie =
+      xcb_intern_atom(conn, 0, strlen(name), name);
+  xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(conn, cookie, 0);
+  xcb_atom_t atom = reply->atom;
+  free(reply);
+  return atom;
+}
+
+internal void renderWeirdGradient(linux32_offscreen_buffer buffer, int xOffset,
+                                  int yOffset) {
+  uint8 *row = (uint8 *)buffer.memory;
+  for (int y = 0; y < buffer.height; ++y) {
     uint32 *pixel = (uint32 *)row;
-    for (int x = 0; x < bitMapWidth; ++x) {
+    for (int x = 0; x < buffer.width; ++x) {
       uint8 blue = x + xOffset;
       uint8 green = y + yOffset;
       *pixel++ = (green << 8) | blue;
     }
-    row += pitch;
+    row += buffer.pitch;
   }
 }
 
-internal void xResizeBackBuffer(uint16 width, uint16 height) {
-  if (bitMapMemory) {
-    munmap(bitMapMemory, bitMapHeight * bitMapWidth * bytesPerPixel);
+internal void xResizeBackBuffer(linux32_offscreen_buffer *buffer, uint16 width,
+                                uint16 height) {
+  if (buffer->memory) {
+    munmap(buffer->memory,
+           buffer->height * buffer->width * buffer->bytesPerPixel);
   }
-  uint32 bitMapMemorySize = width * height * bytesPerPixel;
-  bitMapWidth = width;
-  bitMapHeight = height;
-  bitMapMemory = mmap(0, bitMapMemorySize, PROT_READ | PROT_WRITE,
-                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (bitMapMemory == MAP_FAILED) {
+  buffer->width = width;
+  buffer->height = height;
+  buffer->bytesPerPixel = 4;
+
+  uint32 bitMapMemorySize = width * height * buffer->bytesPerPixel;
+  buffer->memory = mmap(0, bitMapMemorySize, PROT_READ | PROT_WRITE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (buffer->memory == MAP_FAILED) {
     printf("error alocando el backbuffer");
     return;
   }
+
+  buffer->pitch = width * buffer->bytesPerPixel;
 }
 
-internal void xUpdateWindow(xcb_connection_t *conn, xcb_window_t window,
-                            xcb_screen_t *screen) {
-  uint32 bitMapMemorySize = bitMapWidth * bitMapHeight * bytesPerPixel;
+internal void xDisplayBufferInWindow(linux32_offscreen_buffer buffer,
+                                     xcb_connection_t *conn,
+                                     xcb_window_t window, uint8 depth,
+                                     xcb_gcontext_t gContext) {
+  uint32 bitMapMemorySize = buffer.width * buffer.height * buffer.bytesPerPixel;
 
-  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext, bitMapWidth,
-                bitMapHeight, 0, 0, 0, screen->root_depth, bitMapMemorySize,
-                (uint8 *)bitMapMemory);
+  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext, buffer.width,
+                buffer.height, 0, 0, 0, depth, bitMapMemorySize,
+                (uint8 *)buffer.memory);
   xcb_flush(conn);
 }
 
-void xHandleEvents(xcb_connection_t *conn, xcb_screen_t *screen,
-                   xcb_generic_event_t *event) {
+void xHandleEvents(xcb_connection_t *conn, uint8 depth,
+                   xcb_generic_event_t *event, xcb_gcontext_t gContext) {
   if (event) {
     switch (event->response_type & ~0x80) {
     case XCB_FOCUS_IN: {
@@ -77,12 +100,11 @@ void xHandleEvents(xcb_connection_t *conn, xcb_screen_t *screen,
     case XCB_EXPOSE: {
       xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
       if (ee->count == 0) {
-        xUpdateWindow(conn, ee->window, screen);
+        xDisplayBufferInWindow(globalBackbuffer, conn, ee->window, depth,
+                               gContext);
       }
     } break;
     case XCB_CONFIGURE_NOTIFY: {
-      xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)event;
-      xResizeBackBuffer(cn->width, cn->height);
     } break;
     default: {
 
@@ -97,6 +119,7 @@ int main() {
     return 1;
   }
 
+  xResizeBackBuffer(&globalBackbuffer, 1280, 720);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
   xcb_event_mask_t events =
@@ -107,36 +130,30 @@ int main() {
                     XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
                     XCB_CW_EVENT_MASK, &events);
 
-  xcb_intern_atom_cookie_t wmProtocolsCookie =
-      xcb_intern_atom(conn, 0, strlen("WM_PROTOCOLS"), "WM_PROTOCOLS");
-  xcb_intern_atom_cookie_t wmDeleteCookie =
-      xcb_intern_atom(conn, 0, strlen("WM_DELETE_WINDOW"), "WM_DELETE_WINDOW");
+  xcb_atom_t stateAtom = GetInternAtom(conn, "_NET_WM_STATE");
+  xcb_atom_t aboveAtom = GetInternAtom(conn, "_NET_WM_STATE_ABOVE");
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, stateAtom, XCB_ATOM_ATOM, 32, 1,
+                      &aboveAtom);
 
-  xcb_intern_atom_reply_t *wmProtocolsReply =
-      xcb_intern_atom_reply(conn, wmProtocolsCookie, 0);
-  xcb_intern_atom_reply_t *wmDeleteReply =
-      xcb_intern_atom_reply(conn, wmDeleteCookie, 0);
+  xcb_atom_t typeAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE");
+  xcb_atom_t utilityAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE_UTILITY");
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, typeAtom, XCB_ATOM_ATOM, 32, 1,
+                      &utilityAtom);
 
-  xcb_atom_t wmProtocols = wmProtocolsReply->atom;
-  xcb_atom_t wmDeleteWindow = wmDeleteReply->atom;
-
-  free(wmProtocolsReply);
-  free(wmDeleteReply);
-
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, wmProtocols, 4, 32,
-                      1, &wmDeleteWindow);
-
+  xcb_atom_t protocolAtom = GetInternAtom(conn, "WM_PROTOCOLS");
+  xcb_atom_t deleteAtom = GetInternAtom(conn, "WM_DELETE_WINDOW");
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, protocolAtom, XCB_ATOM_ATOM, 32,
+                      1, &deleteAtom);
   const char *title = "handmade hero";
 
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, XCB_ATOM_WM_NAME,
                       XCB_ATOM_STRING, 8, strlen(title), title);
 
-  gContext = xcb_generate_id(conn);
+  xcb_gcontext_t gContext = xcb_generate_id(conn);
   xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND,
                 &screen->black_pixel);
 
   xcb_map_window(conn, window);
-  xcb_flush(conn);
 
   running = true;
   int xOffset = 0;
@@ -146,16 +163,17 @@ int main() {
     while ((event = xcb_poll_for_event(conn))) {
       if ((event->response_type & ~0x80) == XCB_CLIENT_MESSAGE) {
         xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
-        if (cm->type == wmProtocols && cm->data.data32[0] == wmDeleteWindow) {
+        if (cm->type == protocolAtom && cm->data.data32[0] == deleteAtom) {
           running = false;
         }
       } else {
-        xHandleEvents(conn, screen, event);
+        xHandleEvents(conn, screen->root_depth, event, gContext);
       }
       free(event);
     }
-    renderWeirdGradient(xOffset, yOffset);
-    xUpdateWindow(conn, window, screen);
+    renderWeirdGradient(globalBackbuffer, xOffset, yOffset);
+    xDisplayBufferInWindow(globalBackbuffer, conn, window, screen->root_depth,
+                           gContext);
     xOffset++;
   }
   xcb_disconnect(conn);
