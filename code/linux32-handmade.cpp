@@ -1,8 +1,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include<sys/mman.h>
 #include <cstring>
+#include <sys/mman.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
@@ -35,22 +35,21 @@ internal void renderWeirdGradient(int xOffset, int yOffset) {
     for (int x = 0; x < bitMapWidth; ++x) {
       uint8 blue = x + xOffset;
       uint8 green = y + yOffset;
-      *pixel++ = (green << 8) | blue; 
+      *pixel++ = (green << 8) | blue;
     }
     row += pitch;
   }
 }
 
 internal void xResizeBackBuffer(uint16 width, uint16 height) {
-  if(bitMapMemory) {
+  if (bitMapMemory) {
     munmap(bitMapMemory, bitMapHeight * bitMapWidth * bytesPerPixel);
   }
   uint32 bitMapMemorySize = width * height * bytesPerPixel;
   bitMapWidth = width;
   bitMapHeight = height;
-  bitMapMemory = mmap(0, bitMapMemorySize,
-      PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
-      -1, 0);
+  bitMapMemory = mmap(0, bitMapMemorySize, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (bitMapMemory == MAP_FAILED) {
     printf("error alocando el backbuffer");
     return;
@@ -67,10 +66,8 @@ internal void xUpdateWindow(xcb_connection_t *conn, xcb_window_t window,
   xcb_flush(conn);
 }
 
-void xGetEvents(xcb_connection_t *conn, xcb_window_t window,
-                xcb_screen_t *screen, xcb_atom_t ct, uint32 md) {
-
-  xcb_generic_event_t *event = xcb_poll_for_event(conn);
+void xHandleEvents(xcb_connection_t *conn, xcb_screen_t *screen,
+                   xcb_generic_event_t *event) {
   if (event) {
     switch (event->response_type & ~0x80) {
     case XCB_FOCUS_IN: {
@@ -86,12 +83,6 @@ void xGetEvents(xcb_connection_t *conn, xcb_window_t window,
     case XCB_CONFIGURE_NOTIFY: {
       xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)event;
       xResizeBackBuffer(cn->width, cn->height);
-    } break;
-    case XCB_CLIENT_MESSAGE: {
-      xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
-      if (cm->type == ct && cm->data.data32[0] == md) {
-        running = false;
-      }
     } break;
     default: {
 
@@ -142,8 +133,8 @@ int main() {
                       XCB_ATOM_STRING, 8, strlen(title), title);
 
   gContext = xcb_generate_id(conn);
-  uint32 values = screen->black_pixel;
-  xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND, &values);
+  xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND,
+                &screen->black_pixel);
 
   xcb_map_window(conn, window);
   xcb_flush(conn);
@@ -152,12 +143,24 @@ int main() {
   int xOffset = 0;
   int yOffset = 0;
   while (running) {
-    xGetEvents(conn, window, screen, wmProtocols, wmDeleteWindow);
+    xcb_generic_event_t *event;
+    event = xcb_poll_for_event(conn);
+    if (event) {
+      if ((event->response_type & ~0x80) == XCB_CLIENT_MESSAGE) {
+        xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
+        if (cm->type == wmProtocols && cm->data.data32[0] == wmDeleteWindow) {
+          running = false;
+          free(event);
+          break;
+        }
+      }
+      xHandleEvents(conn, screen, event);
+    }
+
     renderWeirdGradient(xOffset, yOffset);
     xUpdateWindow(conn, window, screen);
     xOffset++;
   }
-
   xcb_disconnect(conn);
   return (0);
 }
