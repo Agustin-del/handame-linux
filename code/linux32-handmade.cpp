@@ -88,7 +88,6 @@ void xHandleEvents(xcb_connection_t *conn, xcb_screen_t *screen,
 
     } break;
     }
-    free(event);
   }
 }
 
@@ -144,19 +143,17 @@ int main() {
   int yOffset = 0;
   while (running) {
     xcb_generic_event_t *event;
-    event = xcb_poll_for_event(conn);
-    if (event) {
+    while ((event = xcb_poll_for_event(conn))) {
       if ((event->response_type & ~0x80) == XCB_CLIENT_MESSAGE) {
         xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
         if (cm->type == wmProtocols && cm->data.data32[0] == wmDeleteWindow) {
           running = false;
-          free(event);
-          break;
         }
+      } else {
+        xHandleEvents(conn, screen, event);
       }
-      xHandleEvents(conn, screen, event);
+      free(event);
     }
-
     renderWeirdGradient(xOffset, yOffset);
     xUpdateWindow(conn, window, screen);
     xOffset++;
