@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,76 +10,94 @@
 #define local_persist static
 #define global_variable static
 
+typedef int8_t int8;
+typedef int16_t int16;
+typedef int32_t int32;
+typedef int64_t int64;
+
+typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
+
 global_variable bool running;
 global_variable void *bitMapMemory;
 global_variable xcb_gcontext_t gContext;
-global_variable uint16_t backBufferWidth;
-global_variable uint16_t backBufferHeight;
+global_variable uint16 bitMapWidth;
+global_variable uint16 bitMapHeight;
+global_variable int bytesPerPixel = 4;
 
-internal void xUpdateWindow(xcb_connection_t *conn, xcb_window_t window,
-                            xcb_screen_t *screen, uint16_t width,
-                            uint16_t height) {
-  uint32_t data_len = width * height * 4;
-  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext, width,
-                height, 0, 0, 0, screen->root_depth, data_len,
-                (const uint8_t *)bitMapMemory);
-
-  xcb_flush(conn);
+internal void renderWeirdGradient(int xOffset, int yOffset) {
+  int pitch = bitMapWidth * bytesPerPixel;
+  uint8 *row = (uint8 *)bitMapMemory;
+  for (int y = 0; y < bitMapHeight; ++y) {
+    uint32 *pixel = (uint32 *)row;
+    for (int x = 0; x < bitMapWidth; ++x) {
+      uint8 blue = x + xOffset;
+      uint8 green = y + yOffset;
+      *pixel++ = (green << 8) | blue; 
+    }
+    row += pitch;
+  }
 }
 
-internal void xResizeBackBuffer(uint16_t width, uint16_t height) {
+internal void xResizeBackBuffer(uint16 width, uint16 height) {
   if (bitMapMemory) {
     free(bitMapMemory);
   }
-
-  backBufferWidth = width;
-  backBufferHeight = height;
-
-  bitMapMemory = malloc(backBufferWidth * backBufferHeight * 4);
+  bitMapWidth = width;
+  bitMapHeight = height;
+  uint32 bitMapMemorySize = width * height * bytesPerPixel;
+  // TODO:Usar mmap y munmap
+  bitMapMemory = malloc(bitMapMemorySize);
   if (!bitMapMemory) {
     printf("error alocando el backbuffer");
     return;
   }
-#if 0
-  uint32_t *pixel = (uint32_t *)bitMapMemory;
-  for (uint32_t y = 0; y < height; ++y) {
-    for (uint32_t x = 0; x < width; ++x) {
-      *pixel++ = 0x00FF00FF;
-    }
-  }
+}
 
-#endif
+internal void xUpdateWindow(xcb_connection_t *conn, xcb_window_t window,
+                            xcb_screen_t *screen) {
+  uint32 bitMapMemorySize = bitMapWidth * bitMapHeight * bytesPerPixel;
+
+  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext, bitMapWidth,
+                bitMapHeight, 0, 0, 0, screen->root_depth, bitMapMemorySize,
+                (uint8 *)bitMapMemory);
+  xcb_flush(conn);
 }
 
 void xGetEvents(xcb_connection_t *conn, xcb_window_t window,
-                xcb_screen_t *screen, xcb_atom_t ct, uint32_t md) {
-  xcb_generic_event_t *event = xcb_wait_for_event(conn);
-  switch (event->response_type & ~0x80) {
-  case XCB_FOCUS_IN: {
-  } break;
-  case XCB_FOCUS_OUT: {
-  } break;
-  case XCB_EXPOSE: {
-    xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
-    if (ee->count == 0) {
-      xUpdateWindow(conn, ee->window, screen, backBufferWidth, backBufferHeight);
-    }
-  } break;
-  case XCB_CONFIGURE_NOTIFY: {
-    xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)event;
-    xResizeBackBuffer(cn->width, cn->height);
-  } break;
-  case XCB_CLIENT_MESSAGE: {
-    xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
-    if (cm->type == ct && cm->data.data32[0] == md) {
-      running = false;
-    }
-  } break;
-  default: {
+                xcb_screen_t *screen, xcb_atom_t ct, uint32 md) {
 
-  } break;
+  xcb_generic_event_t *event = xcb_poll_for_event(conn);
+  if (event) {
+    switch (event->response_type & ~0x80) {
+    case XCB_FOCUS_IN: {
+    } break;
+    case XCB_FOCUS_OUT: {
+    } break;
+    case XCB_EXPOSE: {
+      xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
+      if (ee->count == 0) {
+        xUpdateWindow(conn, ee->window, screen);
+      }
+    } break;
+    case XCB_CONFIGURE_NOTIFY: {
+      xcb_configure_notify_event_t *cn = (xcb_configure_notify_event_t *)event;
+      xResizeBackBuffer(cn->width, cn->height);
+    } break;
+    case XCB_CLIENT_MESSAGE: {
+      xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
+      if (cm->type == ct && cm->data.data32[0] == md) {
+        running = false;
+      }
+    } break;
+    default: {
+
+    } break;
+    }
+    free(event);
   }
-  free(event);
 }
 
 int main() {
@@ -122,15 +141,20 @@ int main() {
                       XCB_ATOM_STRING, 8, strlen(title), title);
 
   gContext = xcb_generate_id(conn);
-  uint32_t values = screen->black_pixel;
+  uint32 values = screen->black_pixel;
   xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND, &values);
 
   xcb_map_window(conn, window);
   xcb_flush(conn);
 
   running = true;
+  int xOffset = 0;
+  int yOffset = 0;
   while (running) {
     xGetEvents(conn, window, screen, wmProtocols, wmDeleteWindow);
+    renderWeirdGradient(xOffset, yOffset);
+    xUpdateWindow(conn, window, screen);
+    xOffset++;
   }
 
   xcb_disconnect(conn);
