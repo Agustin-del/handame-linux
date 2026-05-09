@@ -1,7 +1,7 @@
-#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include<sys/mman.h>
 #include <cstring>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
@@ -42,15 +42,16 @@ internal void renderWeirdGradient(int xOffset, int yOffset) {
 }
 
 internal void xResizeBackBuffer(uint16 width, uint16 height) {
-  if (bitMapMemory) {
-    free(bitMapMemory);
+  if(bitMapMemory) {
+    munmap(bitMapMemory, bitMapHeight * bitMapWidth * bytesPerPixel);
   }
+  uint32 bitMapMemorySize = width * height * bytesPerPixel;
   bitMapWidth = width;
   bitMapHeight = height;
-  uint32 bitMapMemorySize = width * height * bytesPerPixel;
-  // TODO:Usar mmap y munmap
-  bitMapMemory = malloc(bitMapMemorySize);
-  if (!bitMapMemory) {
+  bitMapMemory = mmap(0, bitMapMemorySize,
+      PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS,
+      -1, 0);
+  if (bitMapMemory == MAP_FAILED) {
     printf("error alocando el backbuffer");
     return;
   }
@@ -101,7 +102,7 @@ void xGetEvents(xcb_connection_t *conn, xcb_window_t window,
 }
 
 int main() {
-  xcb_connection_t *conn = xcb_connect(NULL, NULL);
+  xcb_connection_t *conn = xcb_connect(0, 0);
   if (xcb_connection_has_error(conn)) {
     return 1;
   }
@@ -122,9 +123,9 @@ int main() {
       xcb_intern_atom(conn, 0, strlen("WM_DELETE_WINDOW"), "WM_DELETE_WINDOW");
 
   xcb_intern_atom_reply_t *wmProtocolsReply =
-      xcb_intern_atom_reply(conn, wmProtocolsCookie, NULL);
+      xcb_intern_atom_reply(conn, wmProtocolsCookie, 0);
   xcb_intern_atom_reply_t *wmDeleteReply =
-      xcb_intern_atom_reply(conn, wmDeleteCookie, NULL);
+      xcb_intern_atom_reply(conn, wmDeleteCookie, 0);
 
   xcb_atom_t wmProtocols = wmProtocolsReply->atom;
   xcb_atom_t wmDeleteWindow = wmDeleteReply->atom;
