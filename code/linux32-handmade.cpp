@@ -1,7 +1,7 @@
-#include <cstdint>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
@@ -20,8 +20,6 @@ typedef uint16_t uint16;
 typedef uint32_t uint32;
 typedef uint64_t uint64;
 
-// THINK: quizas no quiero el graphic context, no lo se
-
 struct linux32_offscreen_buffer {
   void *memory;
   uint16 width;
@@ -30,8 +28,12 @@ struct linux32_offscreen_buffer {
   int pitch;
 };
 
-global_variable bool running;
+global_variable bool globalRunning;
 global_variable linux32_offscreen_buffer globalBackbuffer;
+
+// Propias
+global_variable int xOffset = 0;
+global_variable int yOffset = 0;
 
 internal xcb_atom_t GetInternAtom(xcb_connection_t *conn, const char *name) {
   xcb_intern_atom_cookie_t cookie =
@@ -42,17 +44,17 @@ internal xcb_atom_t GetInternAtom(xcb_connection_t *conn, const char *name) {
   return atom;
 }
 
-internal void renderWeirdGradient(linux32_offscreen_buffer buffer, int xOffset,
+internal void renderWeirdGradient(linux32_offscreen_buffer *buffer, int xOffset,
                                   int yOffset) {
-  uint8 *row = (uint8 *)buffer.memory;
-  for (int y = 0; y < buffer.height; ++y) {
+  uint8 *row = (uint8 *)buffer->memory;
+  for (int y = 0; y < buffer->height; ++y) {
     uint32 *pixel = (uint32 *)row;
-    for (int x = 0; x < buffer.width; ++x) {
+    for (int x = 0; x < buffer->width; ++x) {
       uint8 blue = x + xOffset;
       uint8 green = y + yOffset;
       *pixel++ = (green << 8) | blue;
     }
-    row += buffer.pitch;
+    row += buffer->pitch;
   }
 }
 
@@ -62,9 +64,10 @@ internal void xResizeBackBuffer(linux32_offscreen_buffer *buffer, uint16 width,
     munmap(buffer->memory,
            buffer->height * buffer->width * buffer->bytesPerPixel);
   }
+
+  buffer->bytesPerPixel = 4;
   buffer->width = width;
   buffer->height = height;
-  buffer->bytesPerPixel = 4;
 
   uint32 bitMapMemorySize = width * height * buffer->bytesPerPixel;
   buffer->memory = mmap(0, bitMapMemorySize, PROT_READ | PROT_WRITE,
@@ -77,22 +80,80 @@ internal void xResizeBackBuffer(linux32_offscreen_buffer *buffer, uint16 width,
   buffer->pitch = width * buffer->bytesPerPixel;
 }
 
-internal void xDisplayBufferInWindow(linux32_offscreen_buffer buffer,
+internal void xDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
                                      xcb_connection_t *conn,
                                      xcb_window_t window, uint8 depth,
                                      xcb_gcontext_t gContext) {
-  uint32 bitMapMemorySize = buffer.width * buffer.height * buffer.bytesPerPixel;
+  uint32 bitMapMemorySize =
+      buffer->width * buffer->height * buffer->bytesPerPixel;
 
-  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext, buffer.width,
-                buffer.height, 0, 0, 0, depth, bitMapMemorySize,
-                (uint8 *)buffer.memory);
+  xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext,
+                buffer->width, buffer->height, 0, 0, 0, depth, bitMapMemorySize,
+                (uint8 *)buffer->memory);
   xcb_flush(conn);
 }
 
-void xHandleEvents(xcb_connection_t *conn, uint8 depth,
-                   xcb_generic_event_t *event, xcb_gcontext_t gContext) {
+internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
+                            xcb_generic_event_t *event,
+                            xcb_gcontext_t gContext) {
   if (event) {
     switch (event->response_type & ~0x80) {
+    case XCB_KEY_PRESS: {
+      xcb_key_press_event_t *ke = (xcb_key_press_event_t *)event;
+      switch (ke->detail) {
+        // 24 == 'Q'
+      case 24: {
+
+      } break;
+        // 25 == 'W'
+      case 25: {
+
+      } break;
+        // 26 == 'E'
+      case 26: {
+
+      } break;
+        // 38 == 'A'
+      case 38: {
+
+      } break;
+        // 39 == 'S'
+      case 39: {
+
+      } break;
+        // 40 == 'D'
+      case 40: {
+
+      } break;
+        // 65 == SPACE
+      case 65: {
+
+      } break;
+        // 111 == UP
+      case 111: {
+        yOffset -= 2;
+
+      } break;
+      // 113 == LEFT
+      case 113: {
+        xOffset -= 2;
+
+      } break;
+      // 114 == RIGHT
+      case 114: {
+        xOffset += 2;
+
+      } break;
+      // 116 == DOWN
+      case 116: {
+        yOffset += 2;
+
+      } break;
+      }
+
+    } break;
+    case XCB_KEY_RELEASE: {
+    } break;
     case XCB_FOCUS_IN: {
     } break;
     case XCB_FOCUS_OUT: {
@@ -100,7 +161,7 @@ void xHandleEvents(xcb_connection_t *conn, uint8 depth,
     case XCB_EXPOSE: {
       xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
       if (ee->count == 0) {
-        xDisplayBufferInWindow(globalBackbuffer, conn, ee->window, depth,
+        xDisplayBufferInWindow(&globalBackbuffer, conn, ee->window, depth,
                                gContext);
       }
     } break;
@@ -118,32 +179,39 @@ int main() {
   if (xcb_connection_has_error(conn)) {
     return 1;
   }
-
   xResizeBackBuffer(&globalBackbuffer, 1280, 720);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
   xcb_event_mask_t events =
       (xcb_event_mask_t)(XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_EXPOSURE |
-                         XCB_EVENT_MASK_STRUCTURE_NOTIFY);
+                         XCB_EVENT_MASK_STRUCTURE_NOTIFY |
+                         XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE);
+
   xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0,
                     screen->width_in_pixels, screen->height_in_pixels, 10,
                     XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
                     XCB_CW_EVENT_MASK, &events);
 
+  /*
+   * INFO: esto si realmente algun dia quisiese hacerlo en serio tendria que
+   * entender un poco mas aunque ahora me lo pone fullscreen, a mi me suena mal
+   * semanticamente hablando.
+   * */
+
   xcb_atom_t stateAtom = GetInternAtom(conn, "_NET_WM_STATE");
-  xcb_atom_t aboveAtom = GetInternAtom(conn, "_NET_WM_STATE_ABOVE");
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, stateAtom, XCB_ATOM_ATOM, 32, 1,
-                      &aboveAtom);
+  xcb_atom_t modalAtom = GetInternAtom(conn, "_NET_WM_STATE_MODAL");
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, stateAtom,
+                      XCB_ATOM_ATOM, 32, 1, &modalAtom);
 
   xcb_atom_t typeAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE");
-  xcb_atom_t utilityAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE_UTILITY");
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, typeAtom, XCB_ATOM_ATOM, 32, 1,
-                      &utilityAtom);
+  xcb_atom_t utilityAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE_NORMAL");
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, typeAtom,
+                      XCB_ATOM_ATOM, 32, 1, &utilityAtom);
 
   xcb_atom_t protocolAtom = GetInternAtom(conn, "WM_PROTOCOLS");
   xcb_atom_t deleteAtom = GetInternAtom(conn, "WM_DELETE_WINDOW");
-  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, protocolAtom, XCB_ATOM_ATOM, 32,
-                      1, &deleteAtom);
+  xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, protocolAtom,
+                      XCB_ATOM_ATOM, 32, 1, &deleteAtom);
   const char *title = "handmade hero";
 
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, XCB_ATOM_WM_NAME,
@@ -155,26 +223,25 @@ int main() {
 
   xcb_map_window(conn, window);
 
-  running = true;
-  int xOffset = 0;
-  int yOffset = 0;
-  while (running) {
+  globalRunning = true;
+
+  while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
       if ((event->response_type & ~0x80) == XCB_CLIENT_MESSAGE) {
         xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
         if (cm->type == protocolAtom && cm->data.data32[0] == deleteAtom) {
-          running = false;
+          globalRunning = false;
         }
       } else {
         xHandleEvents(conn, screen->root_depth, event, gContext);
       }
       free(event);
     }
-    renderWeirdGradient(globalBackbuffer, xOffset, yOffset);
-    xDisplayBufferInWindow(globalBackbuffer, conn, window, screen->root_depth,
+
+    renderWeirdGradient(&globalBackbuffer, xOffset, yOffset);
+    xDisplayBufferInWindow(&globalBackbuffer, conn, window, screen->root_depth,
                            gContext);
-    xOffset++;
   }
   xcb_disconnect(conn);
   return (0);
