@@ -98,12 +98,14 @@ internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
                             xcb_gcontext_t gContext) {
   if (event) {
     switch (event->response_type & ~0x80) {
+    case XCB_KEY_RELEASE:
     case XCB_KEY_PRESS: {
-      xcb_key_press_event_t *ke = (xcb_key_press_event_t *)event;
-      switch (ke->detail) {
-        // 24 == 'Q'
-      case 24: {
 
+      xcb_key_press_event_t *ke = (xcb_key_press_event_t *)event;
+      bool isPressed = (event->response_type & ~0x80) == XCB_KEY_PRESS;
+      switch (ke->detail) {
+      // 24 == 'Q'
+      case 24: {
       } break;
         // 25 == 'W'
       case 25: {
@@ -131,28 +133,32 @@ internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
       } break;
         // 111 == UP
       case 111: {
-        yOffset -= 2;
+        if (isPressed) {
+          yOffset -= 2;
+        }
 
       } break;
-      // 113 == LEFT
+        // 113 == LEFT
       case 113: {
-        xOffset -= 2;
+        if (isPressed) {
+          xOffset -= 2;
+        }
 
       } break;
-      // 114 == RIGHT
+        // 114 == RIGHT
       case 114: {
-        xOffset += 2;
+        if (isPressed) {
+          xOffset += 2;
+        }
 
       } break;
-      // 116 == DOWN
+        // 116 == DOWN
       case 116: {
-        yOffset += 2;
-
+        if (isPressed) {
+          yOffset += 2;
+        }
       } break;
       }
-
-    } break;
-    case XCB_KEY_RELEASE: {
     } break;
     case XCB_FOCUS_IN: {
     } break;
