@@ -80,7 +80,7 @@ ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
 #define snd_pcm_hw_params_get_buffer_size snd_pcm_hw_params_get_buffer_size_
 
 internal snd_pcm_t *linux32InitSound(int32 framesPerSecond, int32 bufferSize) {
-  void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
+  void *alsaLib = dlopen("libasound.so", RTLD_NOW);
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
 
@@ -360,6 +360,10 @@ int main() {
   xcb_map_window(conn, window);
 
   snd_pcm_t *soundHandler = linux32InitSound(48000, 48000 * 2);
+  if (!soundHandler) {
+    //loguear o fijarse de no usarlo, porque no cargo, es decir
+    //no tengo las funciones disponibles globalmente
+  }
   globalRunning = true;
 
   while (globalRunning) {
