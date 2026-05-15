@@ -64,31 +64,8 @@ ALSA_FUNCTION(snd_pcm_recover);
 #define snd_pcm_recover snd_pcm_recover_
 
 // INFO:CONFIG ALSA
-ALSA_FUNCTION(snd_pcm_hw_params_malloc);
-#define snd_pcm_hw_params_malloc snd_pcm_hw_params_malloc_
-ALSA_FUNCTION(snd_pcm_hw_params_free);
-#define snd_pcm_hw_params_free snd_pcm_hw_params_free_
-
-ALSA_FUNCTION(snd_pcm_hw_params_any);
-#define snd_pcm_hw_params_any snd_pcm_hw_params_any_
-
-ALSA_FUNCTION(snd_pcm_hw_params);
-#define snd_pcm_hw_params snd_pcm_hw_params_
-
-ALSA_FUNCTION(snd_pcm_hw_params_set_access);
-#define snd_pcm_hw_params_set_access snd_pcm_hw_params_set_access_
-
-ALSA_FUNCTION(snd_pcm_hw_params_set_format);
-#define snd_pcm_hw_params_set_format snd_pcm_hw_params_set_format_
-
-ALSA_FUNCTION(snd_pcm_hw_params_set_channels);
-#define snd_pcm_hw_params_set_channels snd_pcm_hw_params_set_channels_
-
-ALSA_FUNCTION(snd_pcm_hw_params_set_rate);
-#define snd_pcm_hw_params_set_rate snd_pcm_hw_params_set_rate_
-
-ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
-#define snd_pcm_hw_params_set_buffer_size snd_pcm_hw_params_set_buffer_size_
+ALSA_FUNCTION(snd_pcm_set_params);
+#define snd_pcm_set_params snd_pcm_set_params_
 
 internal snd_pcm_t *linux32InitSound(int32 samplesPerSecond,
                                      linux32_audio_buffer *audioBuffer) {
@@ -101,77 +78,20 @@ internal snd_pcm_t *linux32InitSound(int32 samplesPerSecond,
         (typeof(snd_pcm_recover_))dlsym(alsaLib, "snd_pcm_recover");
     snd_pcm_avail = (typeof(snd_pcm_avail_))dlsym(alsaLib, "snd_pcm_avail");
 
-    snd_pcm_hw_params_malloc = (typeof(snd_pcm_hw_params_malloc_))dlsym(
-        alsaLib, "snd_pcm_hw_params_malloc");
-
-    snd_pcm_hw_params_any =
-        (typeof(snd_pcm_hw_params_any_))dlsym(alsaLib, "snd_pcm_hw_params_any");
-
-    snd_pcm_hw_params =
-        (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
-
-    snd_pcm_hw_params_free = (typeof(snd_pcm_hw_params_free_))dlsym(
-        alsaLib, "snd_pcm_hw_params_free");
-
-    snd_pcm_hw_params_set_access = (typeof(snd_pcm_hw_params_set_access_))dlsym(
-        alsaLib, "snd_pcm_hw_params_set_access");
-
-    snd_pcm_hw_params_set_format = (typeof(snd_pcm_hw_params_set_format_))dlsym(
-        alsaLib, "snd_pcm_hw_params_set_format");
-
-    snd_pcm_hw_params_set_channels =
-        (typeof(snd_pcm_hw_params_set_channels_))dlsym(
-            alsaLib, "snd_pcm_hw_params_set_channels");
-
-    snd_pcm_hw_params_set_rate = (typeof(snd_pcm_hw_params_set_rate_))dlsym(
-        alsaLib, "snd_pcm_hw_params_set_rate");
-
-    snd_pcm_hw_params_set_buffer_size =
-        (typeof(snd_pcm_hw_params_set_buffer_size_))dlsym(
-            alsaLib, "snd_pcm_hw_params_set_buffer_size");
-
-    snd_pcm_hw_params_set_buffer_size =
-        (typeof(snd_pcm_hw_params_set_buffer_size_))dlsym(
-            alsaLib, "snd_pcm_hw_params_set_buffer_size");
+    snd_pcm_set_params =
+        (typeof(snd_pcm_set_params_))dlsym(alsaLib, "snd_pcm_set_params");
 
     snd_pcm_t *pcm;
     if (!snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK,
                       SND_PCM_NONBLOCK)) {
-      snd_pcm_hw_params_t *params;
-      int error;
-      error = snd_pcm_hw_params_malloc(&params);
-      if (error) {
-        return 0;
-      }
-      snd_pcm_hw_params_any(pcm, params);
-      snd_pcm_hw_params_set_access(pcm, params, SND_PCM_ACCESS_RW_INTERLEAVED);
-      if (error) {
-        return 0;
-      }
-      snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
-      if (error) {
-        return 0;
-      }
-      snd_pcm_hw_params_set_channels(pcm, params, 2);
-      if (error) {
-        return 0;
-      }
-      snd_pcm_hw_params_set_rate(pcm, params, samplesPerSecond, 0);
-      if (error) {
-        return 0;
-      }
-      snd_pcm_hw_params_set_buffer_size(
-          pcm, params, (audioBuffer->size / audioBuffer->bytesPerSample));
-      if (error) {
-        return 0;
-      }
-      if (!snd_pcm_hw_params(pcm, params)) {
+      if ((snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE,
+                              SND_PCM_ACCESS_RW_INTERLEAVED, 2,
+                              samplesPerSecond, 0, 20000)) >= 0) {
         audioBuffer->memory = mmap(0, audioBuffer->size, PROT_READ | PROT_WRITE,
                                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (audioBuffer->memory == MAP_FAILED) {
           return 0;
         }
-        snd_pcm_hw_params_free(params);
         return pcm;
       } else {
       }
