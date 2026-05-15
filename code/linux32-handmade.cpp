@@ -66,7 +66,8 @@ ALSA_FUNCTION(snd_pcm_mmap_commit);
 ALSA_FUNCTION(snd_pcm_set_params);
 #define snd_pcm_set_params snd_pcm_set_params_
 
-internal snd_pcm_t *linux32InitSound(uint32 samplesPerSecond, uint8 channels, uint32 latency) {
+//INFO:Ojo parametrizaste los canales y estas accediendo como si siempre fueran 2.
+internal snd_pcm_t *linux32InitSound(uint32 samplesPerSecond, uint8 channels, uint32 latency, bool32 resample) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
@@ -89,7 +90,7 @@ internal snd_pcm_t *linux32InitSound(uint32 samplesPerSecond, uint8 channels, ui
                       SND_PCM_NONBLOCK)) {
       if ((snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE,
                               SND_PCM_ACCESS_MMAP_INTERLEAVED, channels,
-                              samplesPerSecond, 0, latency)) >= 0) {
+                              samplesPerSecond, resample, latency)) >= 0) {
         return pcm;
       } else {
       }
@@ -300,13 +301,14 @@ int main() {
   int samplesPerSecond = 48000;
   uint8 channels = 2;
   uint32 latency = 20000;
+  bool32 resample = 0;
   int toneHz = 440;
   int16 toneVolume = 1000;
   int squareWavePeriod = (samplesPerSecond / toneHz);
   int halfSquareWavePeriod = squareWavePeriod / 2;
   uint32 runningSampleIndex = 0;
 
-  snd_pcm_t *audioHandler = linux32InitSound(samplesPerSecond, channels, latency);
+  snd_pcm_t *audioHandler = linux32InitSound(samplesPerSecond, channels, latency, resample);
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
