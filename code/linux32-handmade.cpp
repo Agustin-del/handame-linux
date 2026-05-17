@@ -40,11 +40,12 @@ struct linux32_offscreen_buffer {
 struct linux32_sound_output {
   int framesPerSecond;
   uint32 bytesPerFrame;
+  uint32 size;
   int toneHz;
   int16 toneVolume;
   int wavePeriod;
   real32 tSine;
-  int32 runningSampleIndex;
+  int latencyFramesCount;
 };
 
 global_variable bool32 globalRunning;
@@ -104,15 +105,12 @@ ALSA_FUNCTION(snd_pcm_hw_params_set_rate);
 ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
 #define snd_pcm_hw_params_set_buffer_size snd_pcm_hw_params_set_buffer_size_
 
-ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
-#define snd_pcm_hw_params_get_buffer_size snd_pcm_hw_params_get_buffer_size_
-
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
 
 // INFO:Ojo parametrizaste los canales y estas accediendo como si siempre
 // fueran 2.
-internal snd_pcm_t *linux32InitSound(uint32 framesPerSecond) {
+internal snd_pcm_t *linux32InitSound() {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
@@ -157,10 +155,6 @@ internal snd_pcm_t *linux32InitSound(uint32 framesPerSecond) {
         (typeof(snd_pcm_hw_params_set_buffer_size_))dlsym(
             alsaLib, "snd_pcm_hw_params_set_buffer_size");
 
-    snd_pcm_hw_params_get_buffer_size =
-        (typeof(snd_pcm_hw_params_get_buffer_size_))dlsym(
-            alsaLib, "snd_pcm_hw_params_get_buffer_size");
-
     snd_pcm_hw_params =
         (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
 
@@ -175,13 +169,10 @@ internal snd_pcm_t *linux32InitSound(uint32 framesPerSecond) {
                                      SND_PCM_ACCESS_MMAP_INTERLEAVED);
         snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
         snd_pcm_hw_params_set_channels(pcm, params, 2);
-        snd_pcm_hw_params_set_rate(pcm, params, framesPerSecond, 0);
+        snd_pcm_hw_params_set_rate(pcm, params, soundOutput.framesPerSecond, 0);
 
-        snd_pcm_hw_params_set_buffer_size(pcm, params, framesPerSecond / 15);
+        snd_pcm_hw_params_set_buffer_size(pcm, params, soundOutput.size);
         if ((snd_pcm_hw_params(pcm, params) >= 0)) {
-          snd_pcm_uframes_t val;
-          snd_pcm_hw_params_get_buffer_size(params, &val);
-          printf("Buffer size: %lu\n", val);
           snd_pcm_hw_params_free(params);
           return pcm;
 
@@ -230,13 +221,19 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
       int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
                                     (offset * areas->step / 8)));
-      for (int sampleIndex = 0; sampleIndex < frames; ++sampleIndex) {
+      if (frames < framesToWrite) {
+        framesToWrite = frames;
+      }
+
+      for (int sampleIndex = 0; sampleIndex < framesToWrite; ++sampleIndex) {
 
         soundOutput->tSine += 2.0f * PI32 / (real32)soundOutput->wavePeriod;
 
+        /*
         while (soundOutput->tSine > 2.0f * PI32) {
           soundOutput->tSine -= 2.0f * PI32;
         }
+        */
         real32 sineValue = sinf(soundOutput->tSine);
 
         int16 sampleValue = (int16)(sineValue * soundOutput->toneVolume);
@@ -244,7 +241,8 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
         *sampleOut++ = sampleValue;
         *sampleOut++ = sampleValue;
       }
-      int writeFrames = snd_pcm_mmap_commit(audioHandler, offset, frames);
+      int writeFrames =
+          snd_pcm_mmap_commit(audioHandler, offset, framesToWrite);
       framesToWrite -= writeFrames;
     }
   }
@@ -426,13 +424,14 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
+  soundOutput.size = soundOutput.framesPerSecond * 2;
   soundOutput.toneHz = 256;
   soundOutput.toneVolume = 10000;
   soundOutput.wavePeriod = (soundOutput.framesPerSecond / soundOutput.toneHz);
   soundOutput.tSine = 0;
-  soundOutput.runningSampleIndex = 0;
+  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 60;
 
-  snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond);
+  snd_pcm_t *audioHandler = linux32InitSound();
 
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
@@ -457,8 +456,13 @@ int main() {
       free(event);
     }
 
-    snd_pcm_sframes_t framesToWrite = snd_pcm_avail_update(audioHandler);
-    linux32FillSoundBuffer(audioHandler, &soundOutput, framesToWrite);
+    local_persist int queued = 0;
+    snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
+    queued = soundOutput.size - avail;
+    if (queued < soundOutput.latencyFramesCount) {
+      int framesToWrite = soundOutput.latencyFramesCount - queued;
+      linux32FillSoundBuffer(audioHandler, &soundOutput, framesToWrite);
+    }
     renderWeirdGradient(&globalBackbuffer, xOffset, yOffset);
 
     if (!isSoundPlaying) {
