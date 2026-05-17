@@ -219,13 +219,18 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
     snd_pcm_uframes_t offset;
     snd_pcm_uframes_t frames;
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
-      int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
-                                    (offset * areas->step / 8)));
+
+      int contiguousFrames;
       if (frames < framesToWrite) {
-        framesToWrite = frames;
+         contiguousFrames = frames;
+      } else {
+        contiguousFrames = framesToWrite;
       }
 
-      for (int sampleIndex = 0; sampleIndex < framesToWrite; ++sampleIndex) {
+      int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
+                                    (offset * areas->step / 8)));
+
+      for (int sampleIndex = 0; sampleIndex < contiguousFrames; ++sampleIndex) {
 
         soundOutput->tSine += 2.0f * PI32 / (real32)soundOutput->wavePeriod;
 
@@ -429,7 +434,7 @@ int main() {
   soundOutput.toneVolume = 10000;
   soundOutput.wavePeriod = (soundOutput.framesPerSecond / soundOutput.toneHz);
   soundOutput.tSine = 0;
-  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 60;
+  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 15;
 
   snd_pcm_t *audioHandler = linux32InitSound();
 
