@@ -1,4 +1,5 @@
 #include <alsa/asoundlib.h>
+#include <ctime>
 #include <dlfcn.h>
 #include <math.h>
 #include <stdint.h>
@@ -6,8 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
+#include <x86intrin.h>
 
 #define internal static
 #define local_persist static
@@ -444,6 +447,11 @@ int main() {
 
   globalRunning = true;
   bool32 isSoundPlaying = false;
+
+  struct timespec lastCounter;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &lastCounter);
+
+  uint64 lastCycleCount = __rdtsc();
   while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
@@ -477,6 +485,26 @@ int main() {
 
     xDisplayBufferInWindow(&globalBackbuffer, conn, window, screen->root_depth,
                            gContext);
+    unsigned dummy;
+    uint64 endCycleCount = __rdtscp(&dummy);
+    struct timespec endCounter;
+    clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
+
+    int64 endNs =
+        (((int64)(endCounter.tv_sec) * 1000000000LL)) + endCounter.tv_nsec;
+    int64 lastNs =
+        (((int64)(lastCounter.tv_sec) * 1000000000LL)) + lastCounter.tv_nsec;
+    uint64 cyclesElapsed = endCycleCount - lastCycleCount;
+    real32 msPerFrame = ((endNs - lastNs) / 1000000.0f);
+    real32 FPS = (real32)(1.0f / ((real32)msPerFrame / 1000.0f));
+    real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
+
+    char buffer[256];
+    int len = sprintf(buffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame,
+                       FPS, MCPF);
+    write(2, buffer, len);
+    lastCounter = endCounter;
+    lastCycleCount = endCycleCount;
   }
 
   snd_pcm_drop(audioHandler);
