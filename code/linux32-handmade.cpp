@@ -220,25 +220,25 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
     snd_pcm_uframes_t frames;
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
 
+      /*
       int contiguousFrames;
       if (frames < framesToWrite) {
          contiguousFrames = frames;
       } else {
         contiguousFrames = framesToWrite;
       }
+      */
 
       int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
                                     (offset * areas->step / 8)));
 
-      for (int sampleIndex = 0; sampleIndex < contiguousFrames; ++sampleIndex) {
+      for (int sampleIndex = 0; sampleIndex < framesToWrite; ++sampleIndex) {
 
         soundOutput->tSine += 2.0f * PI32 / (real32)soundOutput->wavePeriod;
 
-        /*
         while (soundOutput->tSine > 2.0f * PI32) {
           soundOutput->tSine -= 2.0f * PI32;
         }
-        */
         real32 sineValue = sinf(soundOutput->tSine);
 
         int16 sampleValue = (int16)(sineValue * soundOutput->toneVolume);
