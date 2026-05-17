@@ -30,6 +30,7 @@ typedef double real64;
 
 struct linux32_offscreen_buffer {
   void *memory;
+  uint32 size;
   uint16 width;
   uint16 height;
   int bytesPerPixel;
@@ -38,17 +39,17 @@ struct linux32_offscreen_buffer {
 
 struct linux32_sound_output {
   int framesPerSecond;
-  uint8 channels;
-  uint32 latency;
-  bool32 resample;
+  uint32 bytesPerFrame;
   int toneHz;
   int16 toneVolume;
   int wavePeriod;
-  uint32 runningSampleIndex;
+  real32 tSine;
+  int32 runningSampleIndex;
 };
 
 global_variable bool32 globalRunning;
 global_variable linux32_offscreen_buffer globalBackbuffer;
+global_variable linux32_sound_output soundOutput;
 
 // Propias
 global_variable int xOffset = 0;
@@ -72,20 +73,46 @@ ALSA_FUNCTION(snd_pcm_avail_update);
 ALSA_FUNCTION(snd_pcm_mmap_commit);
 #define snd_pcm_mmap_commit snd_pcm_mmap_commit_
 
-ALSA_FUNCTION(snd_pcm_drain);
-#define snd_pcm_drain snd_pcm_drain_
+ALSA_FUNCTION(snd_pcm_drop);
+#define snd_pcm_drop snd_pcm_drop_
 
 ALSA_FUNCTION(snd_pcm_close);
 #define snd_pcm_close snd_pcm_close_
 
 // INFO:CONFIG ALSA
-ALSA_FUNCTION(snd_pcm_set_params);
-#define snd_pcm_set_params snd_pcm_set_params_
+ALSA_FUNCTION(snd_pcm_hw_params_malloc);
+#define snd_pcm_hw_params_malloc snd_pcm_hw_params_malloc_
+
+ALSA_FUNCTION(snd_pcm_hw_params_free);
+#define snd_pcm_hw_params_free snd_pcm_hw_params_free_
+
+ALSA_FUNCTION(snd_pcm_hw_params_any);
+#define snd_pcm_hw_params_any snd_pcm_hw_params_any_
+
+ALSA_FUNCTION(snd_pcm_hw_params_set_access);
+#define snd_pcm_hw_params_set_access snd_pcm_hw_params_set_access_
+
+ALSA_FUNCTION(snd_pcm_hw_params_set_format);
+#define snd_pcm_hw_params_set_format snd_pcm_hw_params_set_format_
+
+ALSA_FUNCTION(snd_pcm_hw_params_set_channels);
+#define snd_pcm_hw_params_set_channels snd_pcm_hw_params_set_channels_
+
+ALSA_FUNCTION(snd_pcm_hw_params_set_rate);
+#define snd_pcm_hw_params_set_rate snd_pcm_hw_params_set_rate_
+
+ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
+#define snd_pcm_hw_params_set_buffer_size snd_pcm_hw_params_set_buffer_size_
+
+ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
+#define snd_pcm_hw_params_get_buffer_size snd_pcm_hw_params_get_buffer_size_
+
+ALSA_FUNCTION(snd_pcm_hw_params);
+#define snd_pcm_hw_params snd_pcm_hw_params_
 
 // INFO:Ojo parametrizaste los canales y estas accediendo como si siempre
 // fueran 2.
-internal snd_pcm_t *linux32InitSound(uint32 samplesPerSecond, uint8 channels,
-                                     uint32 latency, bool32 resample) {
+internal snd_pcm_t *linux32InitSound(uint32 framesPerSecond) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
@@ -100,21 +127,69 @@ internal snd_pcm_t *linux32InitSound(uint32 samplesPerSecond, uint8 channels,
     snd_pcm_mmap_commit =
         (typeof(snd_pcm_mmap_commit_))dlsym(alsaLib, "snd_pcm_mmap_commit");
 
-    snd_pcm_drain = (typeof(snd_pcm_drain_))dlsym(alsaLib, "snd_pcm_drain");
+    snd_pcm_drop = (typeof(snd_pcm_drop_))dlsym(alsaLib, "snd_pcm_drop");
 
     snd_pcm_close = (typeof(snd_pcm_close_))dlsym(alsaLib, "snd_pcm_close");
-    snd_pcm_set_params =
-        (typeof(snd_pcm_set_params_))dlsym(alsaLib, "snd_pcm_set_params");
+
+    snd_pcm_hw_params_malloc = (typeof(snd_pcm_hw_params_malloc_))dlsym(
+        alsaLib, "snd_pcm_hw_params_malloc");
+
+    snd_pcm_hw_params_free = (typeof(snd_pcm_hw_params_free_))dlsym(
+        alsaLib, "snd_pcm_hw_params_free");
+
+    snd_pcm_hw_params_any =
+        (typeof(snd_pcm_hw_params_any_))dlsym(alsaLib, "snd_pcm_hw_params_any");
+
+    snd_pcm_hw_params_set_access = (typeof(snd_pcm_hw_params_set_access_))dlsym(
+        alsaLib, "snd_pcm_hw_params_set_access");
+
+    snd_pcm_hw_params_set_format = (typeof(snd_pcm_hw_params_set_format_))dlsym(
+        alsaLib, "snd_pcm_hw_params_set_format");
+
+    snd_pcm_hw_params_set_channels =
+        (typeof(snd_pcm_hw_params_set_channels_))dlsym(
+            alsaLib, "snd_pcm_hw_params_set_channels");
+
+    snd_pcm_hw_params_set_rate = (typeof(snd_pcm_hw_params_set_rate_))dlsym(
+        alsaLib, "snd_pcm_hw_params_set_rate");
+
+    snd_pcm_hw_params_set_buffer_size =
+        (typeof(snd_pcm_hw_params_set_buffer_size_))dlsym(
+            alsaLib, "snd_pcm_hw_params_set_buffer_size");
+
+    snd_pcm_hw_params_get_buffer_size =
+        (typeof(snd_pcm_hw_params_get_buffer_size_))dlsym(
+            alsaLib, "snd_pcm_hw_params_get_buffer_size");
+
+    snd_pcm_hw_params =
+        (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
 
     snd_pcm_t *pcm;
     if (!snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK,
                       SND_PCM_NONBLOCK)) {
-      if ((snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE,
-                              SND_PCM_ACCESS_MMAP_INTERLEAVED, channels,
-                              samplesPerSecond, resample, latency)) >= 0) {
-        return pcm;
+
+      snd_pcm_hw_params_t *params;
+      if (!snd_pcm_hw_params_malloc(&params)) {
+        snd_pcm_hw_params_any(pcm, params);
+        snd_pcm_hw_params_set_access(pcm, params,
+                                     SND_PCM_ACCESS_MMAP_INTERLEAVED);
+        snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
+        snd_pcm_hw_params_set_channels(pcm, params, 2);
+        snd_pcm_hw_params_set_rate(pcm, params, framesPerSecond, 0);
+
+        snd_pcm_hw_params_set_buffer_size(pcm, params, framesPerSecond / 15);
+        if ((snd_pcm_hw_params(pcm, params) >= 0)) {
+          snd_pcm_uframes_t val;
+          snd_pcm_hw_params_get_buffer_size(params, &val);
+          printf("Buffer size: %lu\n", val);
+          snd_pcm_hw_params_free(params);
+          return pcm;
+
+        } else {
+        }
       } else {
       }
+
     } else {
     }
   } else {
@@ -153,17 +228,21 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
     snd_pcm_uframes_t offset;
     snd_pcm_uframes_t frames;
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
-      int16 *sampleOut =
-          ((int16 *)(((char *)areas->addr + (areas->first / 8))) + offset * 2);
+      int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
+                                    (offset * areas->step / 8)));
       for (int sampleIndex = 0; sampleIndex < frames; ++sampleIndex) {
-        real32 t = 2.0f * PI32 * (real32)soundOutput->runningSampleIndex /
-                   (real32)soundOutput->wavePeriod;
-        real32 sineValue = sinf(t);
+
+        soundOutput->tSine += 2.0f * PI32 / (real32)soundOutput->wavePeriod;
+
+        while (soundOutput->tSine > 2.0f * PI32) {
+          soundOutput->tSine -= 2.0f * PI32;
+        }
+        real32 sineValue = sinf(soundOutput->tSine);
+
         int16 sampleValue = (int16)(sineValue * soundOutput->toneVolume);
 
         *sampleOut++ = sampleValue;
         *sampleOut++ = sampleValue;
-        ++soundOutput->runningSampleIndex;
       }
       int writeFrames = snd_pcm_mmap_commit(audioHandler, offset, frames);
       framesToWrite -= writeFrames;
@@ -207,17 +286,18 @@ internal void xDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
 }
 
 internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
-                            xcb_generic_event_t *event,
-                            xcb_gcontext_t gContext) {
+                            xcb_generic_event_t *event, xcb_gcontext_t gContext,
+                            linux32_sound_output *soundOutput) {
   if (event) {
     switch (event->response_type & ~0x80) {
     case XCB_KEY_RELEASE:
     case XCB_KEY_PRESS: {
 
       xcb_key_press_event_t *ke = (xcb_key_press_event_t *)event;
-      bool32 isPressed = (event->response_type & ~0x80) == XCB_KEY_PRESS;
       // TODO:manejar alt + f4
+
       switch (ke->detail) {
+
       // 24 == 'Q'
       case 24: {
       } break;
@@ -247,32 +327,31 @@ internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
       } break;
         // 111 == UP
       case 111: {
-        if (isPressed) {
-          yOffset -= 2;
-        }
+        yOffset -= 2;
 
+        soundOutput->toneHz += 1;
+        soundOutput->wavePeriod =
+            soundOutput->framesPerSecond / soundOutput->toneHz;
       } break;
         // 113 == LEFT
       case 113: {
-        if (isPressed) {
-          xOffset -= 2;
-        }
+        xOffset -= 2;
 
       } break;
         // 114 == RIGHT
       case 114: {
-        if (isPressed) {
-          xOffset += 2;
-        }
+        xOffset += 2;
 
       } break;
         // 116 == DOWN
       case 116: {
-        if (isPressed) {
-          yOffset += 2;
-        }
-      } break;
+        yOffset += 2;
+        soundOutput->toneHz -= 1;
+        soundOutput->wavePeriod =
+            soundOutput->framesPerSecond / soundOutput->toneHz;
       }
+      }
+      break;
     } break;
     case XCB_FOCUS_IN: {
     } break;
@@ -345,35 +424,35 @@ int main() {
 
   xcb_map_window(conn, window);
 
-  linux32_sound_output soundOutput = {};
   soundOutput.framesPerSecond = 48000;
-  soundOutput.channels = 2;
-  soundOutput.latency = 20000;
-  soundOutput.resample = 0;
+  soundOutput.bytesPerFrame = sizeof(int16) * 2;
   soundOutput.toneHz = 256;
-  soundOutput.toneVolume = 3000;
+  soundOutput.toneVolume = 10000;
   soundOutput.wavePeriod = (soundOutput.framesPerSecond / soundOutput.toneHz);
+  soundOutput.tSine = 0;
   soundOutput.runningSampleIndex = 0;
 
-  snd_pcm_t *audioHandler =
-      linux32InitSound(soundOutput.framesPerSecond, soundOutput.channels,
-                       soundOutput.latency, soundOutput.resample);
+  snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond);
 
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
   globalRunning = true;
+  bool32 isSoundPlaying = false;
   while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
-      if ((event->response_type & ~0x80) == XCB_CLIENT_MESSAGE) {
+      uint8 type = event->response_type & ~0x80;
+      if (type == XCB_CLIENT_MESSAGE) {
         xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
         if (cm->type == protocolAtom && cm->data.data32[0] == deleteAtom) {
           globalRunning = false;
         }
+      } else if (type == XCB_DESTROY_NOTIFY) {
+        globalRunning = false;
       } else {
-        xHandleEvents(conn, screen->root_depth, event, gContext);
+        xHandleEvents(conn, screen->root_depth, event, gContext, &soundOutput);
       }
       free(event);
     }
@@ -381,15 +460,18 @@ int main() {
     snd_pcm_sframes_t framesToWrite = snd_pcm_avail_update(audioHandler);
     linux32FillSoundBuffer(audioHandler, &soundOutput, framesToWrite);
     renderWeirdGradient(&globalBackbuffer, xOffset, yOffset);
-    snd_pcm_start(audioHandler);
+
+    if (!isSoundPlaying) {
+      snd_pcm_start(audioHandler);
+      isSoundPlaying = true;
+    }
 
     xDisplayBufferInWindow(&globalBackbuffer, conn, window, screen->root_depth,
                            gContext);
   }
 
-  xcb_disconnect(conn);
-  // mee
-  snd_pcm_drain(audioHandler);
+  snd_pcm_drop(audioHandler);
   snd_pcm_close(audioHandler);
+  xcb_disconnect(conn);
   return (0);
 }
