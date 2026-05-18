@@ -1,15 +1,4 @@
-#include <alsa/asoundlib.h>
-#include <dlfcn.h>
-#include <math.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/mman.h>
-#include <time.h>
-#include <xcb/xcb.h>
-#include <xcb/xproto.h>
-
 #define internal static
 #define local_persist static
 #define global_variable static
@@ -29,9 +18,20 @@ typedef uint64_t uint64;
 typedef float real32;
 typedef double real64;
 
+#include "handmade.cpp"
+#include <alsa/asoundlib.h>
+#include <dlfcn.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+//#include <time.h>
+#include <xcb/xcb.h>
+#include <xcb/xproto.h>
+
 struct linux32_offscreen_buffer {
   void *memory;
-  uint32 size;
   uint16 width;
   uint16 height;
   int bytesPerPixel;
@@ -189,27 +189,14 @@ internal snd_pcm_t *linux32InitSound() {
   return 0;
 }
 
-internal xcb_atom_t GetInternAtom(xcb_connection_t *conn, const char *name) {
+internal xcb_atom_t linux32GetInternAtom(xcb_connection_t *conn,
+                                         const char *name) {
   xcb_intern_atom_cookie_t cookie =
       xcb_intern_atom(conn, 0, strlen(name), name);
   xcb_intern_atom_reply_t *reply = xcb_intern_atom_reply(conn, cookie, 0);
   xcb_atom_t atom = reply->atom;
   free(reply);
   return atom;
-}
-
-internal void renderWeirdGradient(linux32_offscreen_buffer *buffer, int xOffset,
-                                  int yOffset) {
-  uint8 *row = (uint8 *)buffer->memory;
-  for (int y = 0; y < buffer->height; ++y) {
-    uint32 *pixel = (uint32 *)row;
-    for (int x = 0; x < buffer->width; ++x) {
-      uint8 blue = x + xOffset;
-      uint8 green = y + yOffset;
-      *pixel++ = (green << 8) | blue;
-    }
-    row += buffer->pitch;
-  }
 }
 
 internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
@@ -247,8 +234,8 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
   }
 }
 
-internal void xResizeBackBuffer(linux32_offscreen_buffer *buffer, uint16 width,
-                                uint16 height) {
+internal void linux32XResizeBackBuffer(linux32_offscreen_buffer *buffer,
+                                       uint16 width, uint16 height) {
   if (buffer->memory) {
     munmap(buffer->memory,
            buffer->height * buffer->width * buffer->bytesPerPixel);
@@ -269,10 +256,10 @@ internal void xResizeBackBuffer(linux32_offscreen_buffer *buffer, uint16 width,
   buffer->pitch = width * buffer->bytesPerPixel;
 }
 
-internal void xDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
-                                     xcb_connection_t *conn,
-                                     xcb_window_t window, uint8 depth,
-                                     xcb_gcontext_t gContext) {
+internal void linux32XDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
+                                            xcb_connection_t *conn,
+                                            xcb_window_t window, uint8 depth,
+                                            xcb_gcontext_t gContext) {
   uint32 bitMapMemorySize =
       buffer->width * buffer->height * buffer->bytesPerPixel;
 
@@ -282,9 +269,10 @@ internal void xDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
   xcb_flush(conn);
 }
 
-internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
-                            xcb_generic_event_t *event, xcb_gcontext_t gContext,
-                            linux32_sound_output *soundOutput) {
+internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
+                                   xcb_generic_event_t *event,
+                                   xcb_gcontext_t gContext,
+                                   linux32_sound_output *soundOutput) {
   if (event) {
     switch (event->response_type & ~0x80) {
     case XCB_KEY_RELEASE:
@@ -357,8 +345,8 @@ internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
     case XCB_EXPOSE: {
       xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
       if (ee->count == 0) {
-        xDisplayBufferInWindow(&globalBackbuffer, conn, ee->window, depth,
-                               gContext);
+        linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
+                                      depth, gContext);
       }
     } break;
     case XCB_CONFIGURE_NOTIFY: {
@@ -391,7 +379,7 @@ int main() {
   if (xcb_connection_has_error(conn)) {
     return 1;
   }
-  xResizeBackBuffer(&globalBackbuffer, 1280, 720);
+  linux32XResizeBackBuffer(&globalBackbuffer, 1280, 720);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
   xcb_event_mask_t events =
@@ -410,18 +398,19 @@ int main() {
    * semanticamente hablando.
    * */
 
-  xcb_atom_t stateAtom = GetInternAtom(conn, "_NET_WM_STATE");
-  xcb_atom_t modalAtom = GetInternAtom(conn, "_NET_WM_STATE_MODAL");
+  xcb_atom_t stateAtom = linux32GetInternAtom(conn, "_NET_WM_STATE");
+  xcb_atom_t modalAtom = linux32GetInternAtom(conn, "_NET_WM_STATE_MODAL");
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, stateAtom,
                       XCB_ATOM_ATOM, 32, 1, &modalAtom);
 
-  xcb_atom_t typeAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE");
-  xcb_atom_t utilityAtom = GetInternAtom(conn, "_NET_WM_WINDOW_TYPE_NORMAL");
+  xcb_atom_t typeAtom = linux32GetInternAtom(conn, "_NET_WM_WINDOW_TYPE");
+  xcb_atom_t utilityAtom =
+      linux32GetInternAtom(conn, "_NET_WM_WINDOW_TYPE_NORMAL");
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, typeAtom,
                       XCB_ATOM_ATOM, 32, 1, &utilityAtom);
 
-  xcb_atom_t protocolAtom = GetInternAtom(conn, "WM_PROTOCOLS");
-  xcb_atom_t deleteAtom = GetInternAtom(conn, "WM_DELETE_WINDOW");
+  xcb_atom_t protocolAtom = linux32GetInternAtom(conn, "WM_PROTOCOLS");
+  xcb_atom_t deleteAtom = linux32GetInternAtom(conn, "WM_DELETE_WINDOW");
   xcb_change_property(conn, XCB_PROP_MODE_REPLACE, window, protocolAtom,
                       XCB_ATOM_ATOM, 32, 1, &deleteAtom);
   const char *title = "handmade hero";
@@ -453,10 +442,12 @@ int main() {
   globalRunning = true;
   bool32 isSoundPlaying = false;
 
+#if 0
   struct timespec lastCounter;
   clock_gettime(CLOCK_MONOTONIC_RAW, &lastCounter);
 
   uint64 lastCycleCount = __rdtsc();
+#endif
   while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
@@ -469,7 +460,8 @@ int main() {
       } else if (type == XCB_DESTROY_NOTIFY) {
         globalRunning = false;
       } else {
-        xHandleEvents(conn, screen->root_depth, event, gContext, &soundOutput);
+        linux32XHandleEvents(conn, screen->root_depth, event, gContext,
+                             &soundOutput);
       }
       free(event);
     }
@@ -481,16 +473,24 @@ int main() {
       int framesToWrite = soundOutput.latencyFramesCount - queued;
       linux32FillSoundBuffer(audioHandler, &soundOutput, framesToWrite);
     }
-    renderWeirdGradient(&globalBackbuffer, xOffset, yOffset);
+
+    game_offscreen_buffer buffer = {};
+    buffer.memory = globalBackbuffer.memory;
+    buffer.width = globalBackbuffer.width;
+    buffer.height = globalBackbuffer.height;
+    buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
+    buffer.pitch = globalBackbuffer.pitch;
+    gameUpdateAndRender(&buffer, xOffset, yOffset);
 
     if (!isSoundPlaying) {
       snd_pcm_start(audioHandler);
       isSoundPlaying = true;
     }
 
-    xDisplayBufferInWindow(&globalBackbuffer, conn, window, screen->root_depth,
-                           gContext);
+    linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                  screen->root_depth, gContext);
 
+#if 0
     // INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces
     // tengo picos y overflows. Quizas es malisimo lo que hice de los ifs,
     // no se, no la tengo tan clara.
@@ -523,6 +523,7 @@ int main() {
     write(2, buffer, len);
     lastCounter = endCounter;
     lastCycleCount = endCycleCount;
+#endif
   }
 
   snd_pcm_drop(audioHandler);
