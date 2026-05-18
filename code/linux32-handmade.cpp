@@ -1,5 +1,4 @@
 #include <alsa/asoundlib.h>
-#include <ctime>
 #include <dlfcn.h>
 #include <math.h>
 #include <stdint.h>
@@ -8,9 +7,9 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
+#include <x86intrin.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
-#include <x86intrin.h>
 
 #define internal static
 #define local_persist static
@@ -110,6 +109,18 @@ ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
 
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
+
+static inline uint64_t GetRDTSC(void) {
+  uint32_t lo, hi;
+
+  __asm__ volatile("cpuid\n\t"
+                   "rdtsc"
+                   : "=a"(lo), "=d"(hi)
+                   : "a"(0)
+                   : "rbx", "rcx");
+
+  return ((uint64_t)hi << 32) | lo;
+}
 
 // INFO:Ojo parametrizaste los canales y estas accediendo como si siempre
 // fueran 2.
@@ -223,15 +234,6 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
     snd_pcm_uframes_t frames;
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
 
-      /*
-      int contiguousFrames;
-      if (frames < framesToWrite) {
-         contiguousFrames = frames;
-      } else {
-        contiguousFrames = framesToWrite;
-      }
-      */
-
       int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
                                     (offset * areas->step / 8)));
 
@@ -239,9 +241,11 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
 
         soundOutput->tSine += 2.0f * PI32 / (real32)soundOutput->wavePeriod;
 
+        /*
         while (soundOutput->tSine > 2.0f * PI32) {
           soundOutput->tSine -= 2.0f * PI32;
         }
+        */
         real32 sineValue = sinf(soundOutput->tSine);
 
         int16 sampleValue = (int16)(sineValue * soundOutput->toneVolume);
@@ -382,6 +386,19 @@ internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
 // fijarse si cambiando la fase(creo que se llama asi se empieza a reproducir al
 // inicio)
 int main() {
+
+  /*
+   * INFO: tambien como otro hack, en vez de cortar los picos o fijarse por overflow 
+   * puedo setear el hilo a que corra en un solo nucleo
+  #include <sched.h>
+  cpu_set_t set;
+
+  CPU_ZERO(&set);
+  CPU_SET(0, &set);
+
+  sched_setaffinity(0, sizeof(set), &set);
+
+  */
   xcb_connection_t *conn = xcb_connect(0, 0);
   if (xcb_connection_has_error(conn)) {
     return 1;
@@ -451,7 +468,7 @@ int main() {
   struct timespec lastCounter;
   clock_gettime(CLOCK_MONOTONIC_RAW, &lastCounter);
 
-  uint64 lastCycleCount = __rdtsc();
+  uint64 lastCycleCount = GetRDTSC();
   while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
@@ -485,23 +502,35 @@ int main() {
 
     xDisplayBufferInWindow(&globalBackbuffer, conn, window, screen->root_depth,
                            gContext);
-    unsigned dummy;
-    uint64 endCycleCount = __rdtscp(&dummy);
+
+    uint64 endCycleCount = GetRDTSC();
+
     struct timespec endCounter;
     clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
 
-    int64 endNs =
-        (((int64)(endCounter.tv_sec) * 1000000000LL)) + endCounter.tv_nsec;
-    int64 lastNs =
-        (((int64)(lastCounter.tv_sec) * 1000000000LL)) + lastCounter.tv_nsec;
+    //INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces tengo picos y overflows
+    if (endCycleCount < lastCycleCount) {
+      lastCycleCount = endCycleCount;
+      lastCounter = endCounter;
+      continue;
+    }
     uint64 cyclesElapsed = endCycleCount - lastCycleCount;
-    real32 msPerFrame = ((endNs - lastNs) / 1000000.0f);
-    real32 FPS = (real32)(1.0f / ((real32)msPerFrame / 1000.0f));
+    if (cyclesElapsed > 100000000) {
+      lastCycleCount = endCycleCount;
+      lastCounter = endCounter;
+      continue;
+    }
+
+    uint64 endNs = ((endCounter.tv_sec * 1000000000LL) + endCounter.tv_nsec);
+    uint64 lastNs = ((lastCounter.tv_sec * 1000000000LL) + lastCounter.tv_nsec);
+
+    real32 msPerFrame = (real32)(endNs - lastNs) / 1000000.0f;
+    real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
     real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
 
     char buffer[256];
-    int len = sprintf(buffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame,
-                       FPS, MCPF);
+    int len =
+        sprintf(buffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame, FPS, MCPF);
     write(2, buffer, len);
     lastCounter = endCounter;
     lastCycleCount = endCycleCount;
