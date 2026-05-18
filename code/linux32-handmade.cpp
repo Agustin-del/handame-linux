@@ -7,7 +7,6 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
-#include <x86intrin.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
@@ -109,18 +108,6 @@ ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
 
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
-
-static inline uint64_t GetRDTSC(void) {
-  uint32_t lo, hi;
-
-  __asm__ volatile("cpuid\n\t"
-                   "rdtsc"
-                   : "=a"(lo), "=d"(hi)
-                   : "a"(0)
-                   : "rbx", "rcx");
-
-  return ((uint64_t)hi << 32) | lo;
-}
 
 // INFO:Ojo parametrizaste los canales y estas accediendo como si siempre
 // fueran 2.
@@ -388,7 +375,8 @@ internal void xHandleEvents(xcb_connection_t *conn, uint8 depth,
 int main() {
 
   /*
-   * INFO: tambien como otro hack, en vez de cortar los picos o fijarse por overflow 
+   * INFO: tambien como otro hack, en vez de cortar los picos o fijarse por
+  overflow
    * puedo setear el hilo a que corra en un solo nucleo
   #include <sched.h>
   cpu_set_t set;
@@ -468,7 +456,7 @@ int main() {
   struct timespec lastCounter;
   clock_gettime(CLOCK_MONOTONIC_RAW, &lastCounter);
 
-  uint64 lastCycleCount = GetRDTSC();
+  uint64 lastCycleCount = __rdtsc();
   while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
@@ -503,32 +491,33 @@ int main() {
     xDisplayBufferInWindow(&globalBackbuffer, conn, window, screen->root_depth,
                            gContext);
 
-    uint64 endCycleCount = GetRDTSC();
+    // INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces
+    // tengo picos y overflows. Quizas es malisimo lo que hice de los ifs,
+    // no se, no la tengo tan clara.
 
     struct timespec endCounter;
     clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
 
-    //INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces tengo picos y overflows
-    if (endCycleCount < lastCycleCount) {
-      lastCycleCount = endCycleCount;
-      lastCounter = endCounter;
-      continue;
-    }
-    uint64 cyclesElapsed = endCycleCount - lastCycleCount;
-    if (cyclesElapsed > 100000000) {
-      lastCycleCount = endCycleCount;
-      lastCounter = endCounter;
-      continue;
-    }
-
     uint64 endNs = ((endCounter.tv_sec * 1000000000LL) + endCounter.tv_nsec);
     uint64 lastNs = ((lastCounter.tv_sec * 1000000000LL) + lastCounter.tv_nsec);
 
+    char buffer[256];
     real32 msPerFrame = (real32)(endNs - lastNs) / 1000000.0f;
     real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
+
+    uint64 endCycleCount = __rdtsc();
+    uint64 cyclesElapsed = endCycleCount - lastCycleCount;
+    if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
+      int len =
+          sprintf(buffer, "%.2fms/f, %.2ff/s, skipped\n", msPerFrame, FPS);
+      write(2, buffer, len);
+      lastCycleCount = endCycleCount;
+      lastCounter = endCounter;
+      continue;
+    }
+
     real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
 
-    char buffer[256];
     int len =
         sprintf(buffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame, FPS, MCPF);
     write(2, buffer, len);
