@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdint.h>
 #define internal static
 #define local_persist static
@@ -21,12 +22,11 @@ typedef double real64;
 #include "handmade.cpp"
 #include <alsa/asoundlib.h>
 #include <dlfcn.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-//#include <time.h>
+// #include <time.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
@@ -106,6 +106,9 @@ ALSA_FUNCTION(snd_pcm_hw_params_set_rate);
 ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
 #define snd_pcm_hw_params_set_buffer_size snd_pcm_hw_params_set_buffer_size_
 
+ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
+#define snd_pcm_hw_params_get_buffer_size snd_pcm_hw_params_get_buffer_size_
+
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
 
@@ -113,6 +116,7 @@ ALSA_FUNCTION(snd_pcm_hw_params);
 // fueran 2.
 internal snd_pcm_t *linux32InitSound() {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
+  snd_pcm_hw_params_t *params = 0;
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
     snd_pcm_start = (typeof(snd_pcm_start_))dlsym(alsaLib, "snd_pcm_start");
@@ -156,6 +160,10 @@ internal snd_pcm_t *linux32InitSound() {
         (typeof(snd_pcm_hw_params_set_buffer_size_))dlsym(
             alsaLib, "snd_pcm_hw_params_set_buffer_size");
 
+    snd_pcm_hw_params_get_buffer_size =
+        (typeof(snd_pcm_hw_params_get_buffer_size_))dlsym(
+            alsaLib, "snd_pcm_hw_params_get_buffer_size");
+
     snd_pcm_hw_params =
         (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
 
@@ -163,7 +171,6 @@ internal snd_pcm_t *linux32InitSound() {
     if (!snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK,
                       SND_PCM_NONBLOCK)) {
 
-      snd_pcm_hw_params_t *params;
       if (!snd_pcm_hw_params_malloc(&params)) {
         snd_pcm_hw_params_any(pcm, params);
         snd_pcm_hw_params_set_access(pcm, params,
@@ -172,12 +179,13 @@ internal snd_pcm_t *linux32InitSound() {
         snd_pcm_hw_params_set_channels(pcm, params, 2);
         snd_pcm_hw_params_set_rate(pcm, params, soundOutput.framesPerSecond, 0);
 
-        snd_pcm_hw_params_set_buffer_size(pcm, params, soundOutput.size);
+        snd_pcm_hw_params_set_buffer_size(pcm, params,
+                                          soundOutput.framesPerSecond / 30);
         if ((snd_pcm_hw_params(pcm, params) >= 0)) {
-          snd_pcm_hw_params_free(params);
           return pcm;
 
         } else {
+          snd_pcm_hw_params_free(params);
         }
       } else {
       }
@@ -185,6 +193,10 @@ internal snd_pcm_t *linux32InitSound() {
     } else {
     }
   } else {
+  }
+
+  if (params) {
+    snd_pcm_hw_params_free(params);
   }
   return 0;
 }
@@ -201,34 +213,24 @@ internal xcb_atom_t linux32GetInternAtom(xcb_connection_t *conn,
 
 internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
                                      linux32_sound_output *soundOutput,
-                                     snd_pcm_sframes_t framesToWrite) {
+                                     snd_pcm_sframes_t framesToWrite,
+                                     game_sound_output_buffer *soundBuffer) {
+  int16 *sourceFrame = soundBuffer->samples;
   while (framesToWrite > 0) {
     const snd_pcm_channel_area_t *areas;
     snd_pcm_uframes_t offset;
     snd_pcm_uframes_t frames;
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
 
-      int16 *sampleOut = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
+      int16 *destFrame = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
                                     (offset * areas->step / 8)));
 
-      for (int sampleIndex = 0; sampleIndex < framesToWrite; ++sampleIndex) {
-
-        soundOutput->tSine += 2.0f * PI32 / (real32)soundOutput->wavePeriod;
-
-        /*
-        while (soundOutput->tSine > 2.0f * PI32) {
-          soundOutput->tSine -= 2.0f * PI32;
-        }
-        */
-        real32 sineValue = sinf(soundOutput->tSine);
-
-        int16 sampleValue = (int16)(sineValue * soundOutput->toneVolume);
-
-        *sampleOut++ = sampleValue;
-        *sampleOut++ = sampleValue;
+      for (int sampleIndex = 0; sampleIndex < frames; ++sampleIndex) {
+        *destFrame++ = *sourceFrame++;
+        *destFrame++ = *sourceFrame++;
       }
-      int writeFrames =
-          snd_pcm_mmap_commit(audioHandler, offset, framesToWrite);
+
+      int writeFrames = snd_pcm_mmap_commit(audioHandler, offset, frames);
       framesToWrite -= writeFrames;
     }
   }
@@ -426,28 +428,30 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.size = soundOutput.framesPerSecond * 2;
+  soundOutput.size = soundOutput.framesPerSecond * soundOutput.bytesPerFrame;
   soundOutput.toneHz = 256;
   soundOutput.toneVolume = 10000;
   soundOutput.wavePeriod = (soundOutput.framesPerSecond / soundOutput.toneHz);
   soundOutput.tSine = 0;
-  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 15;
+  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 30;
 
   snd_pcm_t *audioHandler = linux32InitSound();
+  snd_pcm_start(audioHandler);
 
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
   globalRunning = true;
-  bool32 isSoundPlaying = false;
+  int16 *samples = (int16 *)mmap(0, soundOutput.latencyFramesCount * soundOutput.bytesPerFrame, PROT_READ | PROT_WRITE,
+                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-#if 0
+  /*
   struct timespec lastCounter;
   clock_gettime(CLOCK_MONOTONIC_RAW, &lastCounter);
 
   uint64 lastCycleCount = __rdtsc();
-#endif
+  */
   while (globalRunning) {
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
@@ -466,13 +470,16 @@ int main() {
       free(event);
     }
 
-    local_persist int queued = 0;
     snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
-    queued = soundOutput.size - avail;
-    if (queued < soundOutput.latencyFramesCount) {
-      int framesToWrite = soundOutput.latencyFramesCount - queued;
-      linux32FillSoundBuffer(audioHandler, &soundOutput, framesToWrite);
+    bool32 soundIsValid = false;
+    if (avail > 0) {
+      soundIsValid = true;
     }
+
+    game_sound_output_buffer soundBuffer = {};
+    soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
+    soundBuffer.sampleCount = avail;
+    soundBuffer.samples = samples;
 
     game_offscreen_buffer buffer = {};
     buffer.memory = globalBackbuffer.memory;
@@ -480,31 +487,31 @@ int main() {
     buffer.height = globalBackbuffer.height;
     buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
     buffer.pitch = globalBackbuffer.pitch;
-    gameUpdateAndRender(&buffer, xOffset, yOffset);
 
-    if (!isSoundPlaying) {
-      snd_pcm_start(audioHandler);
-      isSoundPlaying = true;
+    gameUpdateAndRender(&buffer, xOffset, yOffset, &soundBuffer,
+                        soundOutput.toneHz);
+    if (soundIsValid) {
+      linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
     }
 
     linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
                                   screen->root_depth, gContext);
 
-#if 0
     // INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces
     // tengo picos y overflows. Quizas es malisimo lo que hice de los ifs,
     // no se, no la tengo tan clara.
 
+#if 0
     struct timespec endCounter;
     clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
 
     uint64 endNs = ((endCounter.tv_sec * 1000000000LL) + endCounter.tv_nsec);
     uint64 lastNs = ((lastCounter.tv_sec * 1000000000LL) + lastCounter.tv_nsec);
 
-    char buffer[256];
     real32 msPerFrame = (real32)(endNs - lastNs) / 1000000.0f;
     real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
 
+    char textBuffer[256];
     uint64 endCycleCount = __rdtsc();
     uint64 cyclesElapsed = endCycleCount - lastCycleCount;
     if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {

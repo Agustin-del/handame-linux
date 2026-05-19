@@ -8,5 +8,12 @@
     int pitch;
   };
 
-  internal void gameUpdateAndRender(game_offscreen_buffer *buffer, int blueOffset, int greenOffset);
+  struct game_sound_output_buffer {
+    int samplesPerSecond;
+    int sampleCount;
+    int16 *samples;
+  };
+
+  internal void gameOutputSound(game_sound_output_buffer *soundBuffer, int toneHz);
+  internal void gameUpdateAndRender(game_offscreen_buffer *buffer, int blueOffset, int greenOffset, game_sound_output_buffer *soundBuffer, int toneHz);
 #endif
