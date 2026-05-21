@@ -20,6 +20,8 @@ typedef float real32;
 typedef double real64;
 
 #include "handmade.cpp"
+#include "handmade.h"
+#include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
 #include <dlfcn.h>
 #include <stdio.h>
@@ -30,32 +32,9 @@ typedef double real64;
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
-struct linux32_offscreen_buffer {
-  void *memory;
-  uint16 width;
-  uint16 height;
-  int bytesPerPixel;
-  int pitch;
-};
-
-struct linux32_sound_output {
-  int framesPerSecond;
-  uint32 bytesPerFrame;
-  uint32 size;
-  int toneHz;
-  int16 toneVolume;
-  int wavePeriod;
-  real32 tSine;
-  int latencyFramesCount;
-};
-
 global_variable bool32 globalRunning;
 global_variable linux32_offscreen_buffer globalBackbuffer;
 global_variable linux32_sound_output soundOutput;
-
-// Propias
-global_variable int xOffset = 0;
-global_variable int yOffset = 0;
 
 #define ALSA_FUNCTION(name) global_variable typeof(name) *name##_
 
@@ -112,11 +91,8 @@ ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
 
-// INFO:Ojo parametrizaste los canales y estas accediendo como si siempre
-// fueran 2.
-internal snd_pcm_t *linux32InitSound() {
+internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
-  snd_pcm_hw_params_t *params = 0;
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
     snd_pcm_start = (typeof(snd_pcm_start_))dlsym(alsaLib, "snd_pcm_start");
@@ -171,17 +147,18 @@ internal snd_pcm_t *linux32InitSound() {
     if (!snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK,
                       SND_PCM_NONBLOCK)) {
 
+      snd_pcm_hw_params_t *params;
       if (!snd_pcm_hw_params_malloc(&params)) {
         snd_pcm_hw_params_any(pcm, params);
         snd_pcm_hw_params_set_access(pcm, params,
                                      SND_PCM_ACCESS_MMAP_INTERLEAVED);
         snd_pcm_hw_params_set_format(pcm, params, SND_PCM_FORMAT_S16_LE);
         snd_pcm_hw_params_set_channels(pcm, params, 2);
-        snd_pcm_hw_params_set_rate(pcm, params, soundOutput.framesPerSecond, 0);
+        snd_pcm_hw_params_set_rate(pcm, params, framesPerSecond, 0);
 
-        snd_pcm_hw_params_set_buffer_size(pcm, params,
-                                          soundOutput.framesPerSecond / 30);
+        snd_pcm_hw_params_set_buffer_size(pcm, params, latency);
         if ((snd_pcm_hw_params(pcm, params) >= 0)) {
+          snd_pcm_hw_params_free(params);
           return pcm;
 
         } else {
@@ -193,10 +170,6 @@ internal snd_pcm_t *linux32InitSound() {
     } else {
     }
   } else {
-  }
-
-  if (params) {
-    snd_pcm_hw_params_free(params);
   }
   return 0;
 }
@@ -274,10 +247,9 @@ internal void linux32XDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
 internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
                                    xcb_generic_event_t *event,
                                    xcb_gcontext_t gContext,
-                                   linux32_sound_output *soundOutput) {
+                                   game_controller_input *keyboard) {
   if (event) {
     switch (event->response_type & ~0x80) {
-    case XCB_KEY_RELEASE:
     case XCB_KEY_PRESS: {
 
       xcb_key_press_event_t *ke = (xcb_key_press_event_t *)event;
@@ -290,7 +262,8 @@ internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
       } break;
         // 25 == 'W'
       case 25: {
-
+        keyboard->w.endedDown = true;
+        // keyboard->w.halfTransitionCount++;
       } break;
         // 26 == 'E'
       case 26: {
@@ -298,44 +271,100 @@ internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
       } break;
         // 38 == 'A'
       case 38: {
-
+        keyboard->a.endedDown = true;
+        // keyboard->a.halfTransitionCount++;
       } break;
         // 39 == 'S'
       case 39: {
-
+        keyboard->s.endedDown = true;
+        // keyboard->s.halfTransitionCount++;
       } break;
         // 40 == 'D'
       case 40: {
-
+        keyboard->d.endedDown = true;
+        // keyboard->d.halfTransitionCount++;
       } break;
         // 65 == SPACE
       case 65: {
-
       } break;
         // 111 == UP
       case 111: {
-        yOffset -= 2;
-
-        soundOutput->toneHz += 1;
-        soundOutput->wavePeriod =
-            soundOutput->framesPerSecond / soundOutput->toneHz;
+        keyboard->up.endedDown = true;
+        // keyboard->up.halfTransitionCount++;
       } break;
         // 113 == LEFT
       case 113: {
-        xOffset -= 2;
-
+        keyboard->left.endedDown = true;
+        // keyboard->left.halfTransitionCount++;
       } break;
         // 114 == RIGHT
       case 114: {
-        xOffset += 2;
-
+        keyboard->right.endedDown = true;
+        // keyboard->right.halfTransitionCount++;
       } break;
         // 116 == DOWN
       case 116: {
-        yOffset += 2;
-        soundOutput->toneHz -= 1;
-        soundOutput->wavePeriod =
-            soundOutput->framesPerSecond / soundOutput->toneHz;
+        keyboard->down.endedDown = true;
+        // keyboard->down.halfTransitionCount++;
+      }
+      }
+      break;
+    } break;
+    case XCB_KEY_RELEASE: {
+      xcb_key_release_event_t *ke = (xcb_key_release_event_t *)event;
+      // TODO:manejar alt + f4
+
+      switch (ke->detail) {
+
+      // 24 == 'Q'
+      case 24: {
+      } break;
+        // 25 == 'W'
+      case 25: {
+        keyboard->w.endedDown = false;
+        // keyboard->w.halfTransitionCount++;
+      } break;
+        // 26 == 'E'
+      case 26: {
+
+      } break;
+        // 38 == 'A'
+      case 38: {
+        keyboard->a.endedDown = false;
+        // keyboard->a.halfTransitionCount++;
+      } break;
+        // 39 == 'S'
+      case 39: {
+        keyboard->s.endedDown = false;
+        // keyboard->s.halfTransitionCount++;
+      } break;
+        // 40 == 'D'
+      case 40: {
+        keyboard->d.endedDown = false;
+        // keyboard->d.halfTransitionCount++;
+      } break;
+        // 65 == SPACE
+      case 65: {
+      } break;
+        // 111 == UP
+      case 111: {
+        keyboard->up.endedDown = false;
+        // keyboard->up.halfTransitionCount++;
+      } break;
+        // 113 == LEFT
+      case 113: {
+        keyboard->left.endedDown = false;
+        // keyboard->left.halfTransitionCount++;
+      } break;
+        // 114 == RIGHT
+      case 114: {
+        keyboard->right.endedDown = false;
+        // keyboard->right.halfTransitionCount++;
+      } break;
+        // 116 == DOWN
+      case 116: {
+        keyboard->down.endedDown = false;
+        // keyboard->down.halfTransitionCount++;
       }
       }
       break;
@@ -428,23 +457,24 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.size = soundOutput.framesPerSecond * soundOutput.bytesPerFrame;
-  soundOutput.toneHz = 256;
-  soundOutput.toneVolume = 10000;
-  soundOutput.wavePeriod = (soundOutput.framesPerSecond / soundOutput.toneHz);
-  soundOutput.tSine = 0;
   soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 30;
 
-  snd_pcm_t *audioHandler = linux32InitSound();
+  snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
+                                             soundOutput.latencyFramesCount);
   snd_pcm_start(audioHandler);
 
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
+  game_input input[2] = {};
+  game_input *newInput = &input[0];
+  game_input *oldInput = &input[1];
+
   globalRunning = true;
-  int16 *samples = (int16 *)mmap(0, soundOutput.latencyFramesCount * soundOutput.bytesPerFrame, PROT_READ | PROT_WRITE,
-                                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  int16 *samples = (int16 *)mmap(
+      0, soundOutput.latencyFramesCount * soundOutput.bytesPerFrame,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   /*
   struct timespec lastCounter;
@@ -453,6 +483,9 @@ int main() {
   uint64 lastCycleCount = __rdtsc();
   */
   while (globalRunning) {
+    newInput->Controllers[0] =oldInput->Controllers[0];
+    game_controller_input *newController = &newInput->Controllers[0];
+    newController->isAnalog = false;
     xcb_generic_event_t *event;
     while ((event = xcb_poll_for_event(conn))) {
       uint8 type = event->response_type & ~0x80;
@@ -465,7 +498,7 @@ int main() {
         globalRunning = false;
       } else {
         linux32XHandleEvents(conn, screen->root_depth, event, gContext,
-                             &soundOutput);
+                             newController);
       }
       free(event);
     }
@@ -488,8 +521,8 @@ int main() {
     buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
     buffer.pitch = globalBackbuffer.pitch;
 
-    gameUpdateAndRender(&buffer, xOffset, yOffset, &soundBuffer,
-                        soundOutput.toneHz);
+    gameUpdateAndRender(newInput, &buffer, &soundBuffer);
+    // no se lo de sound is valid
     if (soundIsValid) {
       linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
     }
@@ -531,6 +564,9 @@ int main() {
     lastCounter = endCounter;
     lastCycleCount = endCycleCount;
 #endif
+    game_input *temp = newInput;
+    newInput = oldInput;
+    oldInput = temp;
   }
 
   snd_pcm_drop(audioHandler);
