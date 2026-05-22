@@ -39,31 +39,38 @@ internal void gameOutputSound(game_sound_output_buffer *soundBuffer,
   }
 }
 
-internal void gameUpdateAndRender(game_input *input, game_offscreen_buffer *buffer,
+internal void gameUpdateAndRender(game_memory *memory, game_input *input,
+                                  game_offscreen_buffer *buffer,
                                   game_sound_output_buffer *soundBuffer) {
-  local_persist int blueOffset = 0;
-  local_persist int greenOffset = 0;
-  local_persist int toneHz = 256;
+  assert(sizeof(game_state) <= memory->permanentStorageSize);
+
+  game_state *gameState = (game_state *)memory->permanentStorage;
+  if (!memory->isInitialized) {
+    gameState->blueOffset = 0;
+    gameState->greenOffset = 0;
+    gameState->toneHz = 256;
+    memory->isInitialized = true;
+  }
 
   game_controller_input *input0 = &input->Controllers[0];
-  if(input0->isAnalog) {
-
+  if (input0->isAnalog) {
   } else {
     if (input0->left.endedDown) {
-      blueOffset -= (int)(4.0f * 1.0f);
+      gameState->blueOffset -= 4;
     } else if (input0->right.endedDown) {
-      blueOffset += (int)(4.0f * 1.0f);
-    } else if(input0->up.endedDown) {
-      toneHz = 440 +(int(56.0f * 1.0f));
-    } else if(input0->down.endedDown) {
-      toneHz = 440 + (int(56.0f * -1.0f));
+      gameState->blueOffset += 4;
+    }
+    if (input0->up.endedDown) {
+      gameState->toneHz += (int)(0.01f * 128.0f);
+    } else if (input0->down.endedDown) {
+      gameState->toneHz -= (int)(0.01f * 128.0f);
     }
   }
 
-  if(input0->a.endedDown) {
-    greenOffset += 1;
+  if (input0->a.endedDown) {
+    gameState->greenOffset++;
   }
 
-  gameOutputSound(soundBuffer, toneHz);
-  renderWeirdGradient(buffer, blueOffset, greenOffset);
+  gameOutputSound(soundBuffer, gameState->toneHz);
+  renderWeirdGradient(buffer, gameState->blueOffset, gameState->greenOffset);
 }

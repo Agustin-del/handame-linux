@@ -467,9 +467,6 @@ int main() {
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
-  game_input input[2] = {};
-  game_input *newInput = &input[0];
-  game_input *oldInput = &input[1];
 
   globalRunning = true;
   int16 *samples = (int16 *)mmap(
@@ -482,93 +479,122 @@ int main() {
 
   uint64 lastCycleCount = __rdtsc();
   */
-  while (globalRunning) {
-    newInput->Controllers[0] =oldInput->Controllers[0];
-    game_controller_input *newController = &newInput->Controllers[0];
-    newController->isAnalog = false;
-    xcb_generic_event_t *event;
-    while ((event = xcb_poll_for_event(conn))) {
-      uint8 type = event->response_type & ~0x80;
-      if (type == XCB_CLIENT_MESSAGE) {
-        xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
-        if (cm->type == protocolAtom && cm->data.data32[0] == deleteAtom) {
+
+#if HANDMADE_INTERNAL
+  void *baseAddress = (void *)terabytes((uint64)2);
+#else
+  void *baseAddress = 0;
+#endif
+
+  game_memory gameMemory = {};
+
+  gameMemory.permanentStorageSize = megabytes(64);
+  gameMemory.transientStorageSize = gigabytes(uint64(4));
+
+  uint64 totalSize = gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
+
+  gameMemory.permanentStorage = mmap(baseAddress, totalSize,
+      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  gameMemory.transientStorage = ((uint8 *)gameMemory.permanentStorage + gameMemory.permanentStorageSize);
+
+  if(samples && gameMemory.permanentStorage && gameMemory.transientStorage) {
+    game_input input[2] = {};
+    game_input *newInput = &input[0];
+    game_input *oldInput = &input[1];
+
+    while (globalRunning) {
+      game_controller_input *newController = &newInput->Controllers[0];
+      newController->isAnalog = false;
+      xcb_generic_event_t *event;
+      while ((event = xcb_poll_for_event(conn))) {
+        uint8 type = event->response_type & ~0x80;
+        if (type == XCB_CLIENT_MESSAGE) {
+          xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
+          if (cm->type == protocolAtom && cm->data.data32[0] == deleteAtom) {
+            globalRunning = false;
+          }
+        } else if (type == XCB_DESTROY_NOTIFY) {
           globalRunning = false;
+        } else {
+          linux32XHandleEvents(conn, screen->root_depth, event, gContext,
+              newController);
         }
-      } else if (type == XCB_DESTROY_NOTIFY) {
-        globalRunning = false;
-      } else {
-        linux32XHandleEvents(conn, screen->root_depth, event, gContext,
-                             newController);
+        free(event);
       }
-      free(event);
-    }
 
-    snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
-    bool32 soundIsValid = false;
-    if (avail > 0) {
-      soundIsValid = true;
-    }
+      snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
+      bool32 soundIsValid = false;
+      if (avail > 0) {
+        soundIsValid = true;
+      }
 
-    game_sound_output_buffer soundBuffer = {};
-    soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
-    soundBuffer.sampleCount = avail;
-    soundBuffer.samples = samples;
+      game_sound_output_buffer soundBuffer = {};
+      soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
+      soundBuffer.sampleCount = avail;
+      soundBuffer.samples = samples;
 
-    game_offscreen_buffer buffer = {};
-    buffer.memory = globalBackbuffer.memory;
-    buffer.width = globalBackbuffer.width;
-    buffer.height = globalBackbuffer.height;
-    buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
-    buffer.pitch = globalBackbuffer.pitch;
+      game_offscreen_buffer buffer = {};
+      buffer.memory = globalBackbuffer.memory;
+      buffer.width = globalBackbuffer.width;
+      buffer.height = globalBackbuffer.height;
+      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
+      buffer.pitch = globalBackbuffer.pitch;
 
-    gameUpdateAndRender(newInput, &buffer, &soundBuffer);
-    // no se lo de sound is valid
-    if (soundIsValid) {
-      linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
-    }
+      gameUpdateAndRender(&gameMemory, newInput, &buffer, &soundBuffer);
+      // no se lo de sound is valid
+      if (soundIsValid) {
+        linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
+      }
 
-    linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                  screen->root_depth, gContext);
+      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+          screen->root_depth, gContext);
 
-    // INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces
-    // tengo picos y overflows. Quizas es malisimo lo que hice de los ifs,
-    // no se, no la tengo tan clara.
+      // INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces
+      // tengo picos y overflows. Quizas es malisimo lo que hice de los ifs,
+      // no se, no la tengo tan clara.
 
 #if 0
-    struct timespec endCounter;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
+      struct timespec endCounter;
+      clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
 
-    uint64 endNs = ((endCounter.tv_sec * 1000000000LL) + endCounter.tv_nsec);
-    uint64 lastNs = ((lastCounter.tv_sec * 1000000000LL) + lastCounter.tv_nsec);
+      uint64 endNs = ((endCounter.tv_sec * 1000000000LL) + endCounter.tv_nsec);
+      uint64 lastNs = ((lastCounter.tv_sec * 1000000000LL) + lastCounter.tv_nsec);
 
-    real32 msPerFrame = (real32)(endNs - lastNs) / 1000000.0f;
-    real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
+      real32 msPerFrame = (real32)(endNs - lastNs) / 1000000.0f;
+      real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
 
-    char textBuffer[256];
-    uint64 endCycleCount = __rdtsc();
-    uint64 cyclesElapsed = endCycleCount - lastCycleCount;
-    if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
-      int len =
+      char textBuffer[256];
+      uint64 endCycleCount = __rdtsc();
+      uint64 cyclesElapsed = endCycleCount - lastCycleCount;
+      if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
+        int len =
           sprintf(buffer, "%.2fms/f, %.2ff/s, skipped\n", msPerFrame, FPS);
-      write(2, buffer, len);
-      lastCycleCount = endCycleCount;
-      lastCounter = endCounter;
-      continue;
-    }
+        write(2, buffer, len);
+        lastCycleCount = endCycleCount;
+        lastCounter = endCounter;
+        continue;
+      }
 
-    real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
+      real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
 
-    int len =
+      int len =
         sprintf(buffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame, FPS, MCPF);
-    write(2, buffer, len);
-    lastCounter = endCounter;
-    lastCycleCount = endCycleCount;
+      write(2, buffer, len);
+      lastCounter = endCounter;
+      lastCycleCount = endCycleCount;
 #endif
-    game_input *temp = newInput;
-    newInput = oldInput;
-    oldInput = temp;
-  }
+      game_input *temp = newInput;
+      newInput = oldInput;
+      oldInput = temp;
+      newInput->Controllers[0] = oldInput->Controllers[0];
+    }
+  } else {
 
+  }
+  
+
+  munmap(samples, soundOutput.bytesPerFrame * soundOutput.latencyFramesCount);
+  munmap(gameMemory.permanentStorage, gameMemory.permanentStorageSize);
   snd_pcm_drop(audioHandler);
   snd_pcm_close(audioHandler);
   xcb_disconnect(conn);

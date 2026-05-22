@@ -1,7 +1,15 @@
 #ifndef HANDMADE_H
+#if HANDMADE_SLOW
+#define assert(expression) if (!(expression)) {*(int *)0 = 0;}
+#else
+#define assert(expression)
+#endif
+
 #define kilobytes(value) (value * 1024)
-#define megabytes(value) (kilobytes(value) * 1024)
-#define gigabytes(value) (megabytes(value) * 1024)
+#define megabytes(value) ((kilobytes(value)) * 1024)
+#define gigabytes(value) ((megabytes(value)) * 1024)
+#define terabytes(value) ((gigabytes(value)) * 1024)
+
 #define arrayCount(array) (sizeof(array) / sizeof((array)[0]))
 
 struct game_offscreen_buffer {
@@ -53,15 +61,25 @@ struct game_input {
   game_controller_input Controllers[4];
 };
 
+struct game_memory {
+  bool32 isInitialized;
+
+  uint64 permanentStorageSize;
+  void *permanentStorage;
+
+  uint64 transientStorageSize;
+  void *transientStorage;
+};
+
+internal void gameOutputSound(game_sound_output_buffer *soundBuffer, int toneHz);
+
+internal void gameUpdateAndRender(game_memory *memory, game_input *input, game_offscreen_buffer *buffer, game_sound_output_buffer *soundBuffer);
+
 struct game_state {
   int toneHz;
   int greenOffset;
   int blueOffset;
 };
-
-internal void gameOutputSound(game_sound_output_buffer *soundBuffer, int toneHz);
-
-internal void gameUpdateAndRender(game_input *input, game_offscreen_buffer *buffer, game_sound_output_buffer *soundBuffer);
 
 #define HANDMADE_H
 #endif

@@ -1,7 +1,7 @@
 [
   {
     "directory":".",
-    "command":"clang++ -g -Wall -o build/handmade code/linux32-handmade.cpp -lxcb",
+    "command":"clang++ -DHANDMADE_SLOW=1 -DHANDMADE_INTERNAL=1 -g -Wall -o build/handmade code/linux32-handmade.cpp -lxcb",
     "file":"linux32-handmade.cpp"
   }
 ]
