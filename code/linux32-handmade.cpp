@@ -94,53 +94,10 @@ ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
 
-internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
-  debug_read_file_result result = {};
-  int fd = open(filename, O_RDONLY);
-  if (fd > 0) {
-    struct stat stats;
-    if (fstat(fd, &stats) == 0) {
-      uint32 fileSize32 = safeTruncateUint64(stats.st_size);
-      result.contents = mmap(0, fileSize32, PROT_READ | PROT_WRITE,
-                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-      if (result.contents != MAP_FAILED) {
-        int rCount = read(fd, result.contents, fileSize32);
-        if (rCount == fileSize32) {
-          result.contentsSize = fileSize32;
-        } else {
-          DEBUGPlatformFreeFileMemory(&result);
-          result.contents = 0;
-        }
-      } else {
-      }
-    } else {
-    }
-    close(fd);
-  } else {
-  }
+//ERROR ALSA
+ALSA_FUNCTION(snd_strerror);
+#define snd_strerror snd_strerror_
 
-  return result;
-}
-
-internal bool32 DEBUGPlatformWriteEntireFile(char *filename, uint32 memorySize,
-                                             void *memory) {
-  bool32 result = false;
-  int fd = creat(filename, S_IRWXU);
-  if (fd > 0) {
-    int wCount = write(fd, memory, memorySize);
-    result = (wCount == memorySize);
-    close(fd);
-  } else {
-  }
-
-  return result;
-}
-
-internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file) {
-  munmap(file->contents, file->contentsSize);
-  file->contents = 0;
-  file->contentsSize = 0;
-}
 
 internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
@@ -194,6 +151,9 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
     snd_pcm_hw_params =
         (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
 
+    snd_strerror =
+        (typeof(snd_strerror_))dlsym(alsaLib, "snd_strerror");
+
     snd_pcm_t *pcm;
     if (!snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK,
                       SND_PCM_NONBLOCK)) {
@@ -233,6 +193,54 @@ internal xcb_atom_t linux32GetInternAtom(xcb_connection_t *conn,
   xcb_atom_t atom = reply->atom;
   free(reply);
   return atom;
+}
+
+internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
+  debug_read_file_result result = {};
+  int fd = open(filename, O_RDONLY);
+  if (fd > 0) {
+    struct stat stats;
+    if (fstat(fd, &stats) == 0) {
+      uint32 fileSize32 = safeTruncateUint64(stats.st_size);
+      result.contents = mmap(0, fileSize32, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+      if (result.contents != MAP_FAILED) {
+        int rCount = read(fd, result.contents, fileSize32);
+        if (rCount == fileSize32) {
+          result.contentsSize = fileSize32;
+        } else {
+          DEBUGPlatformFreeFileMemory(&result);
+          result.contents = 0;
+        }
+      } else {
+      }
+    } else {
+    }
+    close(fd);
+  } else {
+  }
+
+  return result;
+}
+
+internal bool32 DEBUGPlatformWriteEntireFile(char *filename, uint32 memorySize,
+                                             void *memory) {
+  bool32 result = false;
+  int fd = creat(filename, S_IRWXU);
+  if (fd > 0) {
+    int wCount = write(fd, memory, memorySize);
+    result = (wCount == memorySize);
+    close(fd);
+  } else {
+  }
+
+  return result;
+}
+
+internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file) {
+  munmap(file->contents, file->contentsSize);
+  file->contents = 0;
+  file->contentsSize = 0;
 }
 
 internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
@@ -598,6 +606,8 @@ int main() {
       // no se lo de sound is valid
       if (soundIsValid) {
         linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
+      } else {
+        snd_strerror(avail);
       }
 
       linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
@@ -645,8 +655,6 @@ int main() {
   } else {
   }
 
-  munmap(samples, soundOutput.bytesPerFrame * soundOutput.latencyFramesCount);
-  munmap(gameMemory.permanentStorage, gameMemory.permanentStorageSize);
   snd_pcm_drop(audioHandler);
   snd_pcm_close(audioHandler);
   xcb_disconnect(conn);
