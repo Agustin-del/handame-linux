@@ -29,6 +29,9 @@ typedef double real64;
 #include <string.h>
 #include <sys/mman.h>
 // #include <time.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
@@ -90,6 +93,54 @@ ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
 
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
+
+internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
+  debug_read_file_result result = {};
+  int fd = open(filename, O_RDONLY);
+  if (fd > 0) {
+    struct stat stats;
+    if (fstat(fd, &stats) == 0) {
+      uint32 fileSize32 = safeTruncateUint64(stats.st_size);
+      result.contents = mmap(0, fileSize32, PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+      if (result.contents != MAP_FAILED) {
+        int rCount = read(fd, result.contents, fileSize32);
+        if (rCount == fileSize32) {
+          result.contentsSize = fileSize32;
+        } else {
+          DEBUGPlatformFreeFileMemory(&result);
+          result.contents = 0;
+        }
+      } else {
+      }
+    } else {
+    }
+    close(fd);
+  } else {
+  }
+
+  return result;
+}
+
+internal bool32 DEBUGPlatformWriteEntireFile(char *filename, uint32 memorySize,
+                                             void *memory) {
+  bool32 result = false;
+  int fd = creat(filename, S_IRWXU);
+  if (fd > 0) {
+    int wCount = write(fd, memory, memorySize);
+    result = (wCount == memorySize);
+    close(fd);
+  } else {
+  }
+
+  return result;
+}
+
+internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file) {
+  munmap(file->contents, file->contentsSize);
+  file->contents = 0;
+  file->contentsSize = 0;
+}
 
 internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
@@ -223,10 +274,7 @@ internal void linux32XResizeBackBuffer(linux32_offscreen_buffer *buffer,
   uint32 bitMapMemorySize = width * height * buffer->bytesPerPixel;
   buffer->memory = mmap(0, bitMapMemorySize, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  if (buffer->memory == MAP_FAILED) {
-    printf("error alocando el backbuffer");
-    return;
-  }
+  assert(buffer->memory != MAP_FAILED);
 
   buffer->pitch = width * buffer->bytesPerPixel;
 }
@@ -389,10 +437,9 @@ internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
   }
 }
 
-// fijarse si cambiando la fase(creo que se llama asi se empieza a reproducir al
-// inicio)
+// fijarse si cambiando la fase(creo que se llama asi se empieza a reproducir
+// al inicio)
 int main() {
-
   /*
    * INFO: tambien como otro hack, en vez de cortar los picos o fijarse por
   overflow
@@ -425,8 +472,8 @@ int main() {
 
   /*
    * INFO: esto si realmente algun dia quisiese hacerlo en serio tendria que
-   * entender un poco mas aunque ahora me lo pone fullscreen, a mi me suena mal
-   * semanticamente hablando.
+   * entender un poco mas aunque ahora me lo pone fullscreen, a mi me suena
+   * mal semanticamente hablando.
    * */
 
   xcb_atom_t stateAtom = linux32GetInternAtom(conn, "_NET_WM_STATE");
@@ -467,11 +514,12 @@ int main() {
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
-
   globalRunning = true;
   int16 *samples = (int16 *)mmap(
       0, soundOutput.latencyFramesCount * soundOutput.bytesPerFrame,
       PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+  assert(samples != MAP_FAILED);
 
   /*
   struct timespec lastCounter;
@@ -481,7 +529,7 @@ int main() {
   */
 
 #if HANDMADE_INTERNAL
-  void *baseAddress = (void *)terabytes((uint64)2);
+  void *baseAddress = (void *)terabytes(2);
 #else
   void *baseAddress = 0;
 #endif
@@ -489,15 +537,21 @@ int main() {
   game_memory gameMemory = {};
 
   gameMemory.permanentStorageSize = megabytes(64);
-  gameMemory.transientStorageSize = gigabytes(uint64(4));
+  gameMemory.transientStorageSize = gigabytes(4);
 
-  uint64 totalSize = gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
+  uint64 totalSize =
+      gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
 
-  gameMemory.permanentStorage = mmap(baseAddress, totalSize,
-      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-  gameMemory.transientStorage = ((uint8 *)gameMemory.permanentStorage + gameMemory.permanentStorageSize);
+  gameMemory.permanentStorage =
+      mmap(baseAddress, totalSize, PROT_READ | PROT_WRITE,
+           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
-  if(samples && gameMemory.permanentStorage && gameMemory.transientStorage) {
+  assert(gameMemory.permanentStorage != MAP_FAILED);
+
+  gameMemory.transientStorage =
+      ((uint8 *)gameMemory.permanentStorage + gameMemory.permanentStorageSize);
+
+  if (samples && gameMemory.permanentStorage && gameMemory.transientStorage) {
     game_input input[2] = {};
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
@@ -517,7 +571,7 @@ int main() {
           globalRunning = false;
         } else {
           linux32XHandleEvents(conn, screen->root_depth, event, gContext,
-              newController);
+                               newController);
         }
         free(event);
       }
@@ -547,11 +601,11 @@ int main() {
       }
 
       linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-          screen->root_depth, gContext);
+                                    screen->root_depth, gContext);
 
-      // INFO: hack porque cuando cambia de core el tsc no se mantiene, entonces
-      // tengo picos y overflows. Quizas es malisimo lo que hice de los ifs,
-      // no se, no la tengo tan clara.
+      // INFO: hack porque cuando cambia de core el tsc no se mantiene,
+      // entonces tengo picos y overflows. Quizas es malisimo lo que hice de
+      // los ifs, no se, no la tengo tan clara.
 
 #if 0
       struct timespec endCounter;
@@ -589,9 +643,7 @@ int main() {
       newInput->Controllers[0] = oldInput->Controllers[0];
     }
   } else {
-
   }
-  
 
   munmap(samples, soundOutput.bytesPerFrame * soundOutput.latencyFramesCount);
   munmap(gameMemory.permanentStorage, gameMemory.permanentStorageSize);

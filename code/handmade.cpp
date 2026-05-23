@@ -1,4 +1,5 @@
 #include "handmade.h"
+#include <stdio.h>
 
 internal void renderWeirdGradient(game_offscreen_buffer *buffer, int xOffset,
                                   int yOffset) {
@@ -45,7 +46,14 @@ internal void gameUpdateAndRender(game_memory *memory, game_input *input,
   assert(sizeof(game_state) <= memory->permanentStorageSize);
 
   game_state *gameState = (game_state *)memory->permanentStorage;
+  
   if (!memory->isInitialized) {
+    char *filename = __FILE__;
+    debug_read_file_result file = DEBUGPlatformReadEntireFile(filename);
+    if(file.contents) {
+      DEBUGPlatformWriteEntireFile("test.out", file.contentsSize, file.contents);
+      DEBUGPlatformFreeFileMemory(&file);
+    }
     gameState->blueOffset = 0;
     gameState->greenOffset = 0;
     gameState->toneHz = 256;
