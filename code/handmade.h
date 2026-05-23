@@ -1,4 +1,3 @@
-#include <cassert>
 #ifndef HANDMADE_H
 #if HANDMADE_SLOW
 #define assert(expression)                                                     \
@@ -35,10 +34,10 @@ internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file);
 
 struct game_offscreen_buffer {
   void *memory;
-  uint16 width;
-  uint16 height;
   int bytesPerPixel;
   int pitch;
+  uint16 width;
+  uint16 height;
 };
 
 struct game_sound_output_buffer {
@@ -48,21 +47,11 @@ struct game_sound_output_buffer {
 };
 
 struct game_button_state {
-  // int halfTransitionCount;
+  int halfTransitionCount;
   bool32 endedDown;
 };
 
 struct game_controller_input {
-  bool32 isAnalog;
-  real32 startX;
-  real32 startY;
-
-  real32 minX;
-  real32 minY;
-
-  real32 endX;
-  real32 endY;
-
   union {
     game_button_state buttons[8];
     struct {
@@ -76,6 +65,16 @@ struct game_controller_input {
       game_button_state w;
     };
   };
+
+  bool32 isAnalog;
+  real32 startX;
+  real32 startY;
+
+  real32 minX;
+  real32 minY;
+
+  real32 endX;
+  real32 endY;
 };
 
 struct game_input {
@@ -83,13 +82,11 @@ struct game_input {
 };
 
 struct game_memory {
-  bool32 isInitialized;
-
   uint64 permanentStorageSize;
   void *permanentStorage;
-
   uint64 transientStorageSize;
   void *transientStorage;
+  bool32 isInitialized;
 };
 
 internal void gameOutputSound(game_sound_output_buffer *soundBuffer,

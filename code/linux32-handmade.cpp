@@ -20,7 +20,6 @@ typedef float real32;
 typedef double real64;
 
 #include "handmade.cpp"
-#include "handmade.h"
 #include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
 #include <dlfcn.h>
@@ -94,7 +93,7 @@ ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
 
-//ERROR ALSA
+// ERROR ALSA
 ALSA_FUNCTION(snd_strerror);
 #define snd_strerror snd_strerror_
 
@@ -149,8 +148,7 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
     snd_pcm_hw_params =
         (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
 
-    snd_strerror =
-        (typeof(snd_strerror_))dlsym(alsaLib, "snd_strerror");
+    snd_strerror = (typeof(snd_strerror_))dlsym(alsaLib, "snd_strerror");
 
     snd_pcm_t *pcm;
     if (!snd_pcm_open(&pcm, "default", SND_PCM_STREAM_PLAYBACK,
@@ -204,7 +202,7 @@ internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
                              MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
       if (result.contents != MAP_FAILED) {
         int rCount = read(fd, result.contents, fileSize32);
-        if (rCount == fileSize32) {
+        if ((uint32)rCount == fileSize32) {
           result.contentsSize = fileSize32;
         } else {
           DEBUGPlatformFreeFileMemory(&result);
@@ -224,10 +222,10 @@ internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
 internal bool32 DEBUGPlatformWriteEntireFile(char *filename, uint32 memorySize,
                                              void *memory) {
   bool32 result = false;
-  int fd = creat(filename, S_IRWXU);
+  int fd = creat(filename, 0644);
   if (fd > 0) {
     int wCount = write(fd, memory, memorySize);
-    result = (wCount == memorySize);
+    result = ((uint32)wCount == memorySize);
     close(fd);
   } else {
   }
@@ -242,7 +240,6 @@ internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file) {
 }
 
 internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
-                                     linux32_sound_output *soundOutput,
                                      snd_pcm_sframes_t framesToWrite,
                                      game_sound_output_buffer *soundBuffer) {
   int16 *sourceFrame = soundBuffer->samples;
@@ -255,7 +252,8 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
       int16 *destFrame = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
                                     (offset * areas->step / 8)));
 
-      for (int sampleIndex = 0; sampleIndex < frames; ++sampleIndex) {
+      for (snd_pcm_uframes_t sampleIndex = 0; sampleIndex < frames;
+           ++sampleIndex) {
         *destFrame++ = *sourceFrame++;
         *destFrame++ = *sourceFrame++;
       }
@@ -298,148 +296,61 @@ internal void linux32XDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
   xcb_flush(conn);
 }
 
-internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
-                                   xcb_generic_event_t *event,
-                                   xcb_gcontext_t gContext,
-                                   game_controller_input *keyboard) {
-  if (event) {
-    switch (event->response_type & ~0x80) {
-    case XCB_KEY_PRESS: {
+internal void linux32ProcessKey(game_button_state *newState, bool32 isDown) {
+  if(newState->endedDown != isDown) {
+    newState->endedDown = isDown;
+    ++newState->halfTransitionCount;
+  }
+}
 
-      xcb_key_press_event_t *ke = (xcb_key_press_event_t *)event;
-      // TODO:manejar alt + f4
+internal void
+linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
+                       game_controller_input *keyboardController) {
 
-      switch (ke->detail) {
+  bool32 isDown = (event->response_type == XCB_KEY_PRESS);
+  switch (event->detail) {
+  // 24 == 'Q'
+  case 24: {
+  } break;
+    // 25 == 'W'
+  case 25: {
+    linux32ProcessKey(&keyboardController->w, isDown);
+  } break;
+    // 26 == 'E'
+  case 26: {
 
-      // 24 == 'Q'
-      case 24: {
-      } break;
-        // 25 == 'W'
-      case 25: {
-        keyboard->w.endedDown = true;
-        // keyboard->w.halfTransitionCount++;
-      } break;
-        // 26 == 'E'
-      case 26: {
-
-      } break;
-        // 38 == 'A'
-      case 38: {
-        keyboard->a.endedDown = true;
-        // keyboard->a.halfTransitionCount++;
-      } break;
-        // 39 == 'S'
-      case 39: {
-        keyboard->s.endedDown = true;
-        // keyboard->s.halfTransitionCount++;
-      } break;
-        // 40 == 'D'
-      case 40: {
-        keyboard->d.endedDown = true;
-        // keyboard->d.halfTransitionCount++;
-      } break;
-        // 65 == SPACE
-      case 65: {
-      } break;
-        // 111 == UP
-      case 111: {
-        keyboard->up.endedDown = true;
-        // keyboard->up.halfTransitionCount++;
-      } break;
-        // 113 == LEFT
-      case 113: {
-        keyboard->left.endedDown = true;
-        // keyboard->left.halfTransitionCount++;
-      } break;
-        // 114 == RIGHT
-      case 114: {
-        keyboard->right.endedDown = true;
-        // keyboard->right.halfTransitionCount++;
-      } break;
-        // 116 == DOWN
-      case 116: {
-        keyboard->down.endedDown = true;
-        // keyboard->down.halfTransitionCount++;
-      }
-      }
-      break;
-    } break;
-    case XCB_KEY_RELEASE: {
-      xcb_key_release_event_t *ke = (xcb_key_release_event_t *)event;
-      // TODO:manejar alt + f4
-
-      switch (ke->detail) {
-
-      // 24 == 'Q'
-      case 24: {
-      } break;
-        // 25 == 'W'
-      case 25: {
-        keyboard->w.endedDown = false;
-        // keyboard->w.halfTransitionCount++;
-      } break;
-        // 26 == 'E'
-      case 26: {
-
-      } break;
-        // 38 == 'A'
-      case 38: {
-        keyboard->a.endedDown = false;
-        // keyboard->a.halfTransitionCount++;
-      } break;
-        // 39 == 'S'
-      case 39: {
-        keyboard->s.endedDown = false;
-        // keyboard->s.halfTransitionCount++;
-      } break;
-        // 40 == 'D'
-      case 40: {
-        keyboard->d.endedDown = false;
-        // keyboard->d.halfTransitionCount++;
-      } break;
-        // 65 == SPACE
-      case 65: {
-      } break;
-        // 111 == UP
-      case 111: {
-        keyboard->up.endedDown = false;
-        // keyboard->up.halfTransitionCount++;
-      } break;
-        // 113 == LEFT
-      case 113: {
-        keyboard->left.endedDown = false;
-        // keyboard->left.halfTransitionCount++;
-      } break;
-        // 114 == RIGHT
-      case 114: {
-        keyboard->right.endedDown = false;
-        // keyboard->right.halfTransitionCount++;
-      } break;
-        // 116 == DOWN
-      case 116: {
-        keyboard->down.endedDown = false;
-        // keyboard->down.halfTransitionCount++;
-      }
-      }
-      break;
-    } break;
-    case XCB_FOCUS_IN: {
-    } break;
-    case XCB_FOCUS_OUT: {
-    } break;
-    case XCB_EXPOSE: {
-      xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
-      if (ee->count == 0) {
-        linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
-                                      depth, gContext);
-      }
-    } break;
-    case XCB_CONFIGURE_NOTIFY: {
-    } break;
-    default: {
-
-    } break;
-    }
+  } break;
+    // 38 == 'A'
+  case 38: {
+    linux32ProcessKey(&keyboardController->a, isDown);
+  } break;
+    // 39 == 'S'
+  case 39: {
+    linux32ProcessKey(&keyboardController->s, isDown);
+  } break;
+    // 40 == 'D'
+  case 40: {
+    linux32ProcessKey(&keyboardController->d, isDown);
+  } break;
+    // 65 == SPACE
+  case 65: {
+  } break;
+    // 111 == UP
+  case 111: {
+    linux32ProcessKey(&keyboardController->up, isDown);
+  } break;
+    // 113 == LEFT
+  case 113: {
+    linux32ProcessKey(&keyboardController->left, isDown);
+  } break;
+    // 114 == RIGHT
+  case 114: {
+    linux32ProcessKey(&keyboardController->right, isDown);
+  } break;
+    // 116 == DOWN
+  case 116: {
+    linux32ProcessKey(&keyboardController->down, isDown);
+  } break;
   }
 }
 
@@ -564,21 +475,44 @@ int main() {
     game_input *oldInput = &input[1];
 
     while (globalRunning) {
-      game_controller_input *newController = &newInput->Controllers[0];
-      newController->isAnalog = false;
+      game_controller_input *keyboardController = &newInput->Controllers[0];
+      game_controller_input zeroController = {};
+      *keyboardController = zeroController;
       xcb_generic_event_t *event;
       while ((event = xcb_poll_for_event(conn))) {
-        uint8 type = event->response_type & ~0x80;
-        if (type == XCB_CLIENT_MESSAGE) {
+        switch (event->response_type & ~0x80) {
+        case XCB_CLIENT_MESSAGE: {
           xcb_client_message_event_t *cm = (xcb_client_message_event_t *)event;
           if (cm->type == protocolAtom && cm->data.data32[0] == deleteAtom) {
             globalRunning = false;
           }
-        } else if (type == XCB_DESTROY_NOTIFY) {
+        } break;
+        case XCB_DESTROY_NOTIFY: {
           globalRunning = false;
-        } else {
-          linux32XHandleEvents(conn, screen->root_depth, event, gContext,
-                               newController);
+        } break;
+        case XCB_KEY_PRESS:
+        case XCB_KEY_RELEASE: {
+          linux32ProcessKeyboardMessage((xcb_key_press_event_t *)event,
+                                 keyboardController);
+        } break;
+        case XCB_FOCUS_IN: {
+
+        } break;
+        case XCB_FOCUS_OUT: {
+        } break;
+        case XCB_EXPOSE: {
+          xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
+          if (ee->count == 0) {
+            linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
+                                          screen->root_depth, gContext);
+          }
+        } break;
+        case XCB_CONFIGURE_NOTIFY: {
+        } break;
+
+        default: {
+
+        } break;
         }
         free(event);
       }
@@ -589,7 +523,7 @@ int main() {
         soundIsValid = true;
       } else {
         int err = snd_pcm_recover(audioHandler, avail, 1);
-        if(err < 0) {
+        if (err < 0) {
           printf("fallo recover: %s\n", snd_strerror(err));
         } else {
           avail = snd_pcm_avail_update(audioHandler);
@@ -608,13 +542,13 @@ int main() {
       buffer.memory = globalBackbuffer.memory;
       buffer.width = globalBackbuffer.width;
       buffer.height = globalBackbuffer.height;
-      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;;
+      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
       buffer.pitch = globalBackbuffer.pitch;
 
       gameUpdateAndRender(&gameMemory, newInput, &buffer, &soundBuffer);
-      // no se lo de sound is valid
+
       if (soundIsValid) {
-        linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
+        linux32FillSoundBuffer(audioHandler, avail, &soundBuffer);
       } 
 
       linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
@@ -657,7 +591,6 @@ int main() {
       game_input *temp = newInput;
       newInput = oldInput;
       oldInput = temp;
-      newInput->Controllers[0] = oldInput->Controllers[0];
     }
   } else {
   }
