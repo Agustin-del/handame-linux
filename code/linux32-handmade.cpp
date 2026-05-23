@@ -54,6 +54,9 @@ ALSA_FUNCTION(snd_pcm_mmap_begin);
 ALSA_FUNCTION(snd_pcm_avail_update);
 #define snd_pcm_avail_update snd_pcm_avail_update_
 
+ALSA_FUNCTION(snd_pcm_recover);
+#define snd_pcm_recover snd_pcm_recover_
+
 ALSA_FUNCTION(snd_pcm_mmap_commit);
 #define snd_pcm_mmap_commit snd_pcm_mmap_commit_
 
@@ -88,16 +91,12 @@ ALSA_FUNCTION(snd_pcm_hw_params_set_rate);
 ALSA_FUNCTION(snd_pcm_hw_params_set_buffer_size);
 #define snd_pcm_hw_params_set_buffer_size snd_pcm_hw_params_set_buffer_size_
 
-ALSA_FUNCTION(snd_pcm_hw_params_get_buffer_size);
-#define snd_pcm_hw_params_get_buffer_size snd_pcm_hw_params_get_buffer_size_
-
 ALSA_FUNCTION(snd_pcm_hw_params);
 #define snd_pcm_hw_params snd_pcm_hw_params_
 
 //ERROR ALSA
 ALSA_FUNCTION(snd_strerror);
 #define snd_strerror snd_strerror_
-
 
 internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
@@ -110,6 +109,9 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
 
     snd_pcm_avail_update =
         (typeof(snd_pcm_avail_update_))dlsym(alsaLib, "snd_pcm_avail_update");
+
+    snd_pcm_recover =
+        (typeof(snd_pcm_recover_))dlsym(alsaLib, "snd_pcm_recover");
 
     snd_pcm_mmap_commit =
         (typeof(snd_pcm_mmap_commit_))dlsym(alsaLib, "snd_pcm_mmap_commit");
@@ -143,10 +145,6 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
     snd_pcm_hw_params_set_buffer_size =
         (typeof(snd_pcm_hw_params_set_buffer_size_))dlsym(
             alsaLib, "snd_pcm_hw_params_set_buffer_size");
-
-    snd_pcm_hw_params_get_buffer_size =
-        (typeof(snd_pcm_hw_params_get_buffer_size_))dlsym(
-            alsaLib, "snd_pcm_hw_params_get_buffer_size");
 
     snd_pcm_hw_params =
         (typeof(snd_pcm_hw_params_))dlsym(alsaLib, "snd_pcm_hw_params");
@@ -448,6 +446,7 @@ internal void linux32XHandleEvents(xcb_connection_t *conn, uint8 depth,
 // fijarse si cambiando la fase(creo que se llama asi se empieza a reproducir
 // al inicio)
 int main() {
+
   /*
    * INFO: tambien como otro hack, en vez de cortar los picos o fijarse por
   overflow
@@ -586,8 +585,18 @@ int main() {
 
       snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
       bool32 soundIsValid = false;
-      if (avail > 0) {
+      if (avail >= 0) {
         soundIsValid = true;
+      } else {
+        int err = snd_pcm_recover(audioHandler, avail, 1);
+        if(err < 0) {
+          printf("fallo recover: %s\n", snd_strerror(err));
+        } else {
+          avail = snd_pcm_avail_update(audioHandler);
+          if (avail >= 0) {
+            soundIsValid = true;
+          }
+        }
       }
 
       game_sound_output_buffer soundBuffer = {};
@@ -599,16 +608,14 @@ int main() {
       buffer.memory = globalBackbuffer.memory;
       buffer.width = globalBackbuffer.width;
       buffer.height = globalBackbuffer.height;
-      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
+      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;;
       buffer.pitch = globalBackbuffer.pitch;
 
       gameUpdateAndRender(&gameMemory, newInput, &buffer, &soundBuffer);
       // no se lo de sound is valid
       if (soundIsValid) {
         linux32FillSoundBuffer(audioHandler, &soundOutput, avail, &soundBuffer);
-      } else {
-        snd_strerror(avail);
-      }
+      } 
 
       linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
                                     screen->root_depth, gContext);
