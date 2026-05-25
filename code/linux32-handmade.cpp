@@ -448,9 +448,11 @@ int main() {
   int gameUpdateHz = monitorRefreshHz / 2;
   uint64 targetNanoSecondsPerFrame = NS / gameUpdateHz;
 
+  real32 targetSecondsPerFrame = 1.0f / gameUpdateHz;
+
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 22;
+  soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond / 20);
 
   snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
                                              soundOutput.latencyFramesCount);
@@ -613,6 +615,9 @@ int main() {
         timespec rem;
         nanosleep(&targetSleep, &rem);
 
+        timespec testCounter = linux32GetTimeSpec();
+        uint64 testNanoSeconds = linux32GetNanoSecondsElapsed(lastCounter, testCounter);
+        assert(testNanoSeconds > targetNanoSecondsPerFrame);
         while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) { 
           timespec checkCounter = linux32GetTimeSpec();
           nanoSecondsElapsedForFrame = linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
