@@ -450,7 +450,7 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 20;
+  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 22;
 
   snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
                                              soundOutput.latencyFramesCount);
@@ -602,32 +602,43 @@ int main() {
       uint64 nanoSecondsElapsedForWork =
           linux32GetNanoSecondsElapsed(lastCounter, endCounter);
 
-      if (nanoSecondsElapsedForWork < targetNanoSecondsPerFrame) {
+      uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
+      if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
         uint64 remainingNs =
-            targetNanoSecondsPerFrame - nanoSecondsElapsedForWork;
+            targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
         timespec targetSleep = {
             .tv_sec = (time_t)(remainingNs / NS),
             .tv_nsec = (int64)(remainingNs % NS),
         };
         timespec rem;
+        nanosleep(&targetSleep, &rem);
 
-        while (nanosleep(&targetSleep, &rem) == -1) {
-          targetSleep = rem;
+        while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) { 
+          timespec checkCounter = linux32GetTimeSpec();
+          nanoSecondsElapsedForFrame = linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
         }
 
       } else {
       }
 
+      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                    screen->root_depth, gContext);
+      game_input *temp = newInput;
+      newInput = oldInput;
+      oldInput = temp;
+
       endCounter = linux32GetTimeSpec();
-      real32 msPerFrame = (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) / 1000000.0f;
+      real32 msPerFrame =
+          (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
+          1000000.0f;
       real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
 
       char textBuffer[256];
       uint64 endCycleCount = __rdtsc();
       uint64 cyclesElapsed = endCycleCount - lastCycleCount;
       if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
-        int len =
-            sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n", msPerFrame, FPS);
+        int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n",
+                          msPerFrame, FPS);
         write(2, textBuffer, len);
         lastCycleCount = endCycleCount;
         lastCounter = endCounter;
@@ -639,12 +650,6 @@ int main() {
       int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame,
                         FPS, MCPF);
       write(2, textBuffer, len);
-
-      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                    screen->root_depth, gContext);
-      game_input *temp = newInput;
-      newInput = oldInput;
-      oldInput = temp;
 
       lastCounter = endCounter;
 
