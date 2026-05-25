@@ -1,4 +1,5 @@
 #include "handmade.h"
+#include <cstdio>
 
 internal void renderWeirdGradient(game_offscreen_buffer *buffer, int xOffset,
                                   int yOffset) {
@@ -42,15 +43,21 @@ internal void gameOutputSound(game_sound_output_buffer *soundBuffer,
 internal void gameUpdateAndRender(game_memory *memory, game_input *input,
                                   game_offscreen_buffer *buffer,
                                   game_sound_output_buffer *soundBuffer) {
+
+  assert(
+      (int)(&input->controllers[0].terminator - &input->controllers[0].buttons[0]) ==
+      (int)(arrayCount(input->controllers[0].buttons)));
+
   assert(sizeof(game_state) <= memory->permanentStorageSize);
 
   game_state *gameState = (game_state *)memory->permanentStorage;
-  
+
   if (!memory->isInitialized) {
     char *filename = __FILE__;
     debug_read_file_result file = DEBUGPlatformReadEntireFile(filename);
-    if(file.contents) {
-      DEBUGPlatformWriteEntireFile("build/test.out", file.contentsSize, file.contents);
+    if (file.contents) {
+      DEBUGPlatformWriteEntireFile("build/test.out", file.contentsSize,
+                                   file.contents);
       DEBUGPlatformFreeFileMemory(&file);
     }
     gameState->blueOffset = 0;
@@ -58,24 +65,23 @@ internal void gameUpdateAndRender(game_memory *memory, game_input *input,
     gameState->toneHz = 256;
     memory->isInitialized = true;
   }
+  for (int controllerIdx = 0;
+       controllerIdx < (int)arrayCount(input->controllers); ++controllerIdx) {
+    game_controller_input *controller = getController(input, controllerIdx);
+    if (controller->isAnalog) {
+    } else {
+      if (controller->moveLeft.endedDown) {
+        gameState->blueOffset -= 1;
+      }
 
-  game_controller_input *input0 = &input->Controllers[0];
-  if (input0->isAnalog) {
-  } else {
-    if (input0->left.endedDown) {
-      gameState->blueOffset -= 4;
-    } else if (input0->right.endedDown) {
-      gameState->blueOffset += 4;
+      if (controller->moveRight.endedDown) {
+        gameState->blueOffset += 1;
+      }
     }
-    if (input0->up.endedDown) {
-      gameState->toneHz += (int)(0.01f * 128.0f);
-    } else if (input0->down.endedDown) {
-      gameState->toneHz -= (int)(0.01f * 128.0f);
-    }
-  }
 
-  if (input0->a.endedDown) {
-    gameState->greenOffset++;
+    if (controller->actionDown.endedDown) {
+      gameState->greenOffset++;
+    }
   }
 
   gameOutputSound(soundBuffer, gameState->toneHz);

@@ -53,33 +53,46 @@ struct game_button_state {
 
 struct game_controller_input {
   union {
-    game_button_state buttons[8];
+    game_button_state buttons[12];
     struct {
-      game_button_state up;
-      game_button_state down;
-      game_button_state left;
-      game_button_state right;
-      game_button_state a;
-      game_button_state s;
-      game_button_state d;
-      game_button_state w;
+      game_button_state moveUp;
+      game_button_state moveDown;
+      game_button_state moveLeft;
+      game_button_state moveRight;
+      
+      game_button_state actionUp;
+      game_button_state actionDown;
+      game_button_state actionLeft;
+      game_button_state actionRight;
+
+      game_button_state leftShoulder;
+      game_button_state rightShoulder;
+
+      game_button_state back;
+      game_button_state start;
+
+      /**/
+      game_button_state terminator;
     };
   };
 
+  bool32 isConnected;
   bool32 isAnalog;
-  real32 startX;
-  real32 startY;
-
-  real32 minX;
-  real32 minY;
-
-  real32 endX;
-  real32 endY;
+  real32 averageX;
+  real32 averageY;
 };
 
 struct game_input {
-  game_controller_input Controllers[4];
+  game_controller_input controllers[5];
 };
+
+inline game_controller_input *getController(game_input *input, int controllerIndex) {
+
+  assert(controllerIndex < (int)arrayCount(input->controllers));
+
+  game_controller_input *result = &input->controllers[controllerIndex];
+  return result;
+}
 
 struct game_memory {
   uint64 permanentStorageSize;

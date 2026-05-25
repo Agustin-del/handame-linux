@@ -297,7 +297,7 @@ internal void linux32XDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
 }
 
 internal void linux32ProcessKey(game_button_state *newState, bool32 isDown) {
-  if(newState->endedDown != isDown) {
+  if (newState->endedDown != isDown) {
     newState->endedDown = isDown;
     ++newState->halfTransitionCount;
   }
@@ -305,7 +305,7 @@ internal void linux32ProcessKey(game_button_state *newState, bool32 isDown) {
 
 internal void
 linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
-                       game_controller_input *keyboardController) {
+                              game_controller_input *keyboardController) {
 
   bool32 isDown = (event->response_type == XCB_KEY_PRESS);
   switch (event->detail) {
@@ -314,7 +314,7 @@ linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
   } break;
     // 25 == 'W'
   case 25: {
-    linux32ProcessKey(&keyboardController->w, isDown);
+    linux32ProcessKey(&keyboardController->moveUp, isDown);
   } break;
     // 26 == 'E'
   case 26: {
@@ -322,34 +322,39 @@ linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
   } break;
     // 38 == 'A'
   case 38: {
-    linux32ProcessKey(&keyboardController->a, isDown);
+    linux32ProcessKey(&keyboardController->moveLeft, isDown);
   } break;
     // 39 == 'S'
   case 39: {
-    linux32ProcessKey(&keyboardController->s, isDown);
+    linux32ProcessKey(&keyboardController->moveDown, isDown);
   } break;
     // 40 == 'D'
   case 40: {
-    linux32ProcessKey(&keyboardController->d, isDown);
-  } break;
-    // 65 == SPACE
-  case 65: {
+    linux32ProcessKey(&keyboardController->moveRight, isDown);
   } break;
     // 111 == UP
   case 111: {
-    linux32ProcessKey(&keyboardController->up, isDown);
+    linux32ProcessKey(&keyboardController->actionUp, isDown);
   } break;
     // 113 == LEFT
   case 113: {
-    linux32ProcessKey(&keyboardController->left, isDown);
+    linux32ProcessKey(&keyboardController->actionLeft, isDown);
   } break;
     // 114 == RIGHT
   case 114: {
-    linux32ProcessKey(&keyboardController->right, isDown);
+    linux32ProcessKey(&keyboardController->actionRight, isDown);
   } break;
     // 116 == DOWN
   case 116: {
-    linux32ProcessKey(&keyboardController->down, isDown);
+    linux32ProcessKey(&keyboardController->actionDown, isDown);
+  } break;
+    // 65 == SPACE
+  case 65: {
+    linux32ProcessKey(&keyboardController->back, isDown);
+  } break;
+    // 66 == ESC
+  case 66: {
+    linux32ProcessKey(&keyboardController->start, isDown);
   } break;
   }
 }
@@ -475,9 +480,19 @@ int main() {
     game_input *oldInput = &input[1];
 
     while (globalRunning) {
-      game_controller_input *keyboardController = &newInput->Controllers[0];
+      game_controller_input *oldKeyboardController = getController(oldInput, 0);
+      game_controller_input *newKeyboardController = getController(newInput, 0);
       game_controller_input zeroController = {};
-      *keyboardController = zeroController;
+      *newKeyboardController = zeroController;
+      newKeyboardController->isConnected = true;
+
+      for (int buttonIdx = 0;
+           buttonIdx < (int)arrayCount(oldKeyboardController->buttons);
+           ++buttonIdx) {
+        newKeyboardController->buttons[buttonIdx].endedDown =
+            oldKeyboardController->buttons[buttonIdx].endedDown;
+      }
+
       xcb_generic_event_t *event;
       while ((event = xcb_poll_for_event(conn))) {
         switch (event->response_type & ~0x80) {
@@ -493,7 +508,7 @@ int main() {
         case XCB_KEY_PRESS:
         case XCB_KEY_RELEASE: {
           linux32ProcessKeyboardMessage((xcb_key_press_event_t *)event,
-                                 keyboardController);
+                                        newKeyboardController);
         } break;
         case XCB_FOCUS_IN: {
 
@@ -549,7 +564,7 @@ int main() {
 
       if (soundIsValid) {
         linux32FillSoundBuffer(audioHandler, avail, &soundBuffer);
-      } 
+      }
 
       linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
                                     screen->root_depth, gContext);
