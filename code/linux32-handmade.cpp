@@ -1,3 +1,4 @@
+#include <ctime>
 #include <math.h>
 #include <stdint.h>
 #define internal static
@@ -5,6 +6,8 @@
 #define global_variable static
 
 #define PI32 3.14159265359f
+#define NS 1000000000ULL
+
 typedef int8_t int8;
 typedef int16_t int16;
 typedef int32_t int32;
@@ -31,6 +34,7 @@ typedef double real64;
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <xcb/present.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
@@ -360,6 +364,21 @@ linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
 
 // fijarse si cambiando la fase(creo que se llama asi se empieza a reproducir
 // al inicio)
+//
+
+inline timespec linux32GetTimeSpec() {
+  struct timespec result;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &result);
+  return result;
+}
+
+inline uint64 linux32GetNanoSecondsElapsed(timespec start, timespec end) {
+  uint64 endNs = ((end.tv_sec * 1000000000LL) + end.tv_nsec);
+  uint64 lastNs = ((start.tv_sec * 1000000000LL) + start.tv_nsec);
+  uint64 result = endNs - lastNs;
+  return result;
+}
+
 int main() {
 
   /*
@@ -379,6 +398,7 @@ int main() {
   if (xcb_connection_has_error(conn)) {
     return 1;
   }
+
   linux32XResizeBackBuffer(&globalBackbuffer, 1280, 720);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
@@ -424,9 +444,13 @@ int main() {
 
   xcb_map_window(conn, window);
 
+  int monitorRefreshHz = 60;
+  int gameUpdateHz = monitorRefreshHz / 2;
+  uint64 targetNanoSecondsPerFrame = NS / gameUpdateHz;
+
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 60;
+  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 20;
 
   snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
                                              soundOutput.latencyFramesCount);
@@ -442,12 +466,9 @@ int main() {
 
   assert(samples != MAP_FAILED);
 
-  /*
-  struct timespec lastCounter;
-  clock_gettime(CLOCK_MONOTONIC_RAW, &lastCounter);
+  timespec lastCounter = linux32GetTimeSpec();
 
   uint64 lastCycleCount = __rdtsc();
-  */
 
 #if HANDMADE_INTERNAL
   void *baseAddress = (void *)terabytes(2);
@@ -537,13 +558,11 @@ int main() {
       if (avail >= 0) {
         soundIsValid = true;
       } else {
-        printf("antes recover: %s\n", snd_strerror(avail));
         int err = snd_pcm_recover(audioHandler, avail, 1);
         if (err < 0) {
           printf("fallo recover: %s\n", snd_strerror(err));
         } else {
           avail = snd_pcm_avail_update(audioHandler);
-          printf("despues recover: %s\n", snd_strerror(avail));
           if (avail >= 0) {
             soundIsValid = true;
           }
@@ -567,25 +586,40 @@ int main() {
       if (soundIsValid) {
         linux32FillSoundBuffer(audioHandler, avail, &soundBuffer);
         if (!isSoundPlaying) {
-          snd_pcm_start(audioHandler);
+          int err = snd_pcm_start(audioHandler);
+          if (!err) {
+            isSoundPlaying = true;
+          }
         }
       }
-
-      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                    screen->root_depth, gContext);
 
       // INFO: hack porque cuando cambia de core el tsc no se mantiene,
       // entonces tengo picos y overflows. Quizas es malisimo lo que hice de
       // los ifs, no se, no la tengo tan clara.
 
-#if 0
-      struct timespec endCounter;
-      clock_gettime(CLOCK_MONOTONIC_RAW, &endCounter);
+      timespec endCounter = linux32GetTimeSpec();
 
-      uint64 endNs = ((endCounter.tv_sec * 1000000000LL) + endCounter.tv_nsec);
-      uint64 lastNs = ((lastCounter.tv_sec * 1000000000LL) + lastCounter.tv_nsec);
+      uint64 nanoSecondsElapsedForWork =
+          linux32GetNanoSecondsElapsed(lastCounter, endCounter);
 
-      real32 msPerFrame = (real32)(endNs - lastNs) / 1000000.0f;
+      if (nanoSecondsElapsedForWork < targetNanoSecondsPerFrame) {
+        uint64 remainingNs =
+            targetNanoSecondsPerFrame - nanoSecondsElapsedForWork;
+        timespec targetSleep = {
+            .tv_sec = (time_t)(remainingNs / NS),
+            .tv_nsec = (int64)(remainingNs % NS),
+        };
+        timespec rem;
+
+        while (nanosleep(&targetSleep, &rem) == -1) {
+          targetSleep = rem;
+        }
+
+      } else {
+      }
+
+      endCounter = linux32GetTimeSpec();
+      real32 msPerFrame = (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) / 1000000.0f;
       real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
 
       char textBuffer[256];
@@ -593,8 +627,8 @@ int main() {
       uint64 cyclesElapsed = endCycleCount - lastCycleCount;
       if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
         int len =
-          sprintf(buffer, "%.2fms/f, %.2ff/s, skipped\n", msPerFrame, FPS);
-        write(2, buffer, len);
+            sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n", msPerFrame, FPS);
+        write(2, textBuffer, len);
         lastCycleCount = endCycleCount;
         lastCounter = endCounter;
         continue;
@@ -602,15 +636,19 @@ int main() {
 
       real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
 
-      int len =
-        sprintf(buffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame, FPS, MCPF);
-      write(2, buffer, len);
-      lastCounter = endCounter;
-      lastCycleCount = endCycleCount;
-#endif
+      int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame,
+                        FPS, MCPF);
+      write(2, textBuffer, len);
+
+      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                    screen->root_depth, gContext);
       game_input *temp = newInput;
       newInput = oldInput;
       oldInput = temp;
+
+      lastCounter = endCounter;
+
+      lastCycleCount = endCycleCount;
     }
   } else {
   }
