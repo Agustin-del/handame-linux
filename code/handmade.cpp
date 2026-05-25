@@ -1,5 +1,4 @@
 #include "handmade.h"
-#include <cstdio>
 
 internal void renderWeirdGradient(game_offscreen_buffer *buffer, int xOffset,
                                   int yOffset) {

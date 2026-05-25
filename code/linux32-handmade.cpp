@@ -246,9 +246,8 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
   while (framesToWrite > 0) {
     const snd_pcm_channel_area_t *areas;
     snd_pcm_uframes_t offset;
-    snd_pcm_uframes_t frames;
+    snd_pcm_uframes_t frames = framesToWrite;
     if (!(snd_pcm_mmap_begin(audioHandler, &areas, &offset, &frames) < 0)) {
-
       int16 *destFrame = (int16 *)(((uint8 *)areas->addr + (areas->first / 8) +
                                     (offset * areas->step / 8)));
 
@@ -258,8 +257,8 @@ internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
         *destFrame++ = *sourceFrame++;
       }
 
-      int writeFrames = snd_pcm_mmap_commit(audioHandler, offset, frames);
-      framesToWrite -= writeFrames;
+      int commited = snd_pcm_mmap_commit(audioHandler, offset, frames);
+      framesToWrite -= commited;
     }
   }
 }
@@ -427,11 +426,10 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 30;
+  soundOutput.latencyFramesCount = soundOutput.framesPerSecond / 60;
 
   snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
                                              soundOutput.latencyFramesCount);
-  snd_pcm_start(audioHandler);
 
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
@@ -473,6 +471,8 @@ int main() {
 
   gameMemory.transientStorage =
       ((uint8 *)gameMemory.permanentStorage + gameMemory.permanentStorageSize);
+
+  bool32 isSoundPlaying = false;
 
   if (samples && gameMemory.permanentStorage && gameMemory.transientStorage) {
     game_input input[2] = {};
@@ -537,11 +537,13 @@ int main() {
       if (avail >= 0) {
         soundIsValid = true;
       } else {
+        printf("antes recover: %s\n", snd_strerror(avail));
         int err = snd_pcm_recover(audioHandler, avail, 1);
         if (err < 0) {
           printf("fallo recover: %s\n", snd_strerror(err));
         } else {
           avail = snd_pcm_avail_update(audioHandler);
+          printf("despues recover: %s\n", snd_strerror(avail));
           if (avail >= 0) {
             soundIsValid = true;
           }
@@ -564,6 +566,9 @@ int main() {
 
       if (soundIsValid) {
         linux32FillSoundBuffer(audioHandler, avail, &soundBuffer);
+        if (!isSoundPlaying) {
+          snd_pcm_start(audioHandler);
+        }
       }
 
       linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
