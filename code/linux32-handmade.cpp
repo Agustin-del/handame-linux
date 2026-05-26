@@ -1,4 +1,3 @@
-#include <ctime>
 #include <math.h>
 #include <stdint.h>
 #define internal static
@@ -26,13 +25,13 @@ typedef double real64;
 #include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
-// #include <time.h>
-#include <fcntl.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <xcb/present.h>
 #include <xcb/xcb.h>
@@ -452,7 +451,10 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond / 20);
+  soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
+                                         ((real32)gameUpdateHz / 2));
+
+  printf("%d\n", soundOutput.latencyFramesCount);
 
   snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
                                              soundOutput.latencyFramesCount);
@@ -616,27 +618,33 @@ int main() {
         nanosleep(&targetSleep, &rem);
 
         timespec testCounter = linux32GetTimeSpec();
-        uint64 testNanoSeconds = linux32GetNanoSecondsElapsed(lastCounter, testCounter);
+        uint64 testNanoSeconds =
+            linux32GetNanoSecondsElapsed(lastCounter, testCounter);
         assert(testNanoSeconds > targetNanoSecondsPerFrame);
-        while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) { 
+        while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
           timespec checkCounter = linux32GetTimeSpec();
-          nanoSecondsElapsedForFrame = linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
+          nanoSecondsElapsedForFrame =
+              linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
         }
 
       } else {
       }
 
-      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                    screen->root_depth, gContext);
-      game_input *temp = newInput;
-      newInput = oldInput;
-      oldInput = temp;
-
       endCounter = linux32GetTimeSpec();
       real32 msPerFrame =
           (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
           1000000.0f;
-      real32 FPS = (real32)(1.0f / (real32)((real32)msPerFrame / 1000.0f));
+      real32 FPS = (real32)(1.0f / (real32)(msPerFrame / 1000.0f));
+
+      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                    screen->root_depth, gContext);
+
+#if HANDMADE_INTERNAL
+      snd_pcm_sframes_t a = snd_pcm_avail_update(audioHandler);
+#endif
+      game_input *temp = newInput;
+      newInput = oldInput;
+      oldInput = temp;
 
       char textBuffer[256];
       uint64 endCycleCount = __rdtsc();
