@@ -38,6 +38,7 @@ typedef double real64;
 #include <xcb/xproto.h>
 
 global_variable bool32 globalRunning;
+global_variable bool32 globalPause;
 global_variable linux32_offscreen_buffer globalBackbuffer;
 global_variable linux32_sound_output soundOutput;
 
@@ -56,11 +57,14 @@ ALSA_FUNCTION(snd_pcm_mmap_begin);
 ALSA_FUNCTION(snd_pcm_avail_update);
 #define snd_pcm_avail_update snd_pcm_avail_update_
 
-ALSA_FUNCTION(snd_pcm_recover);
-#define snd_pcm_recover snd_pcm_recover_
-
 ALSA_FUNCTION(snd_pcm_mmap_commit);
 #define snd_pcm_mmap_commit snd_pcm_mmap_commit_
+
+ALSA_FUNCTION(snd_pcm_delay);
+#define snd_pcm_delay snd_pcm_delay_
+
+ALSA_FUNCTION(snd_pcm_recover);
+#define snd_pcm_recover snd_pcm_recover_
 
 ALSA_FUNCTION(snd_pcm_drop);
 #define snd_pcm_drop snd_pcm_drop_
@@ -100,7 +104,7 @@ ALSA_FUNCTION(snd_pcm_hw_params);
 ALSA_FUNCTION(snd_strerror);
 #define snd_strerror snd_strerror_
 
-internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
+internal snd_pcm_t *linux32InitSound(int framesPerSecond) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
   if (alsaLib) {
     snd_pcm_open = (typeof(snd_pcm_open_))dlsym(alsaLib, "snd_pcm_open");
@@ -112,13 +116,14 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
     snd_pcm_avail_update =
         (typeof(snd_pcm_avail_update_))dlsym(alsaLib, "snd_pcm_avail_update");
 
-    snd_pcm_recover =
-        (typeof(snd_pcm_recover_))dlsym(alsaLib, "snd_pcm_recover");
-
     snd_pcm_mmap_commit =
         (typeof(snd_pcm_mmap_commit_))dlsym(alsaLib, "snd_pcm_mmap_commit");
 
     snd_pcm_drop = (typeof(snd_pcm_drop_))dlsym(alsaLib, "snd_pcm_drop");
+
+    snd_pcm_delay = (typeof(snd_pcm_delay_))dlsym(alsaLib, "snd_pcm_delay");
+
+    snd_pcm_recover = (typeof(snd_pcm_recover_))dlsym(alsaLib, "snd_pcm_recover");
 
     snd_pcm_close = (typeof(snd_pcm_close_))dlsym(alsaLib, "snd_pcm_close");
 
@@ -166,7 +171,7 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond, int latency) {
         snd_pcm_hw_params_set_channels(pcm, params, 2);
         snd_pcm_hw_params_set_rate(pcm, params, framesPerSecond, 0);
 
-        snd_pcm_hw_params_set_buffer_size(pcm, params, latency);
+        snd_pcm_hw_params_set_buffer_size(pcm, params, 3200);
         if ((snd_pcm_hw_params(pcm, params) >= 0)) {
           snd_pcm_hw_params_free(params);
           return pcm;
@@ -194,6 +199,7 @@ internal xcb_atom_t linux32GetInternAtom(xcb_connection_t *conn,
   return atom;
 }
 
+#if HANDMADE_INTERNAL
 internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
   debug_read_file_result result = {};
   int fd = open(filename, O_RDONLY);
@@ -242,6 +248,7 @@ internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file) {
   file->contentsSize = 0;
 }
 
+#endif
 internal void linux32FillSoundBuffer(snd_pcm_t *audioHandler,
                                      snd_pcm_sframes_t framesToWrite,
                                      game_sound_output_buffer *soundBuffer) {
@@ -311,6 +318,14 @@ linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
 
   bool32 isDown = (event->response_type == XCB_KEY_PRESS);
   switch (event->detail) {
+#if HANDMADE_INTERNAL
+  // 33 == 'P'
+  case 33: {
+    if (isDown) {
+      globalPause = !globalPause;
+    }
+  } break;
+#endif
   // 24 == 'Q'
   case 24: {
   } break;
@@ -451,22 +466,25 @@ int main() {
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
-                                         ((real32)gameUpdateHz / 2));
+  soundOutput.safetyFrames = ((soundOutput.framesPerSecond * 2) / gameUpdateHz);
 
-  printf("%d\n", soundOutput.latencyFramesCount);
+  // soundOutput.latencyFramesCount = soundOutput.framesPerSecond /
+  // gameUpdateHz;
+  /*
+soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
+                                     ((real32)gameUpdateHz * 2 / 3));
+                                     */
 
-  snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond,
-                                             soundOutput.latencyFramesCount);
+  snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond);
 
   // TODO: si no se cargo el so?
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
   globalRunning = true;
-  int16 *samples = (int16 *)mmap(
-      0, soundOutput.latencyFramesCount * soundOutput.bytesPerFrame,
-      PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  int16 *samples =
+      (int16 *)mmap(0, soundOutput.framesPerSecond * soundOutput.bytesPerFrame,
+                    PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   assert(samples != MAP_FAILED);
 
@@ -557,116 +575,119 @@ int main() {
         free(event);
       }
 
-      snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
-      bool32 soundIsValid = false;
-      if (avail >= 0) {
-        soundIsValid = true;
-      } else {
-        int err = snd_pcm_recover(audioHandler, avail, 1);
-        if (err < 0) {
-          printf("fallo recover: %s\n", snd_strerror(err));
-        } else {
-          avail = snd_pcm_avail_update(audioHandler);
-          if (avail >= 0) {
-            soundIsValid = true;
-          }
-        }
-      }
+      if (!globalPause) {
+        game_offscreen_buffer buffer = {};
+        buffer.memory = globalBackbuffer.memory;
+        buffer.width = globalBackbuffer.width;
+        buffer.height = globalBackbuffer.height;
+        buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
+        buffer.pitch = globalBackbuffer.pitch;
 
-      game_sound_output_buffer soundBuffer = {};
-      soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
-      soundBuffer.sampleCount = avail;
-      soundBuffer.samples = samples;
+        gameUpdateAndRender(&gameMemory, newInput, &buffer);
 
-      game_offscreen_buffer buffer = {};
-      buffer.memory = globalBackbuffer.memory;
-      buffer.width = globalBackbuffer.width;
-      buffer.height = globalBackbuffer.height;
-      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
-      buffer.pitch = globalBackbuffer.pitch;
-
-      gameUpdateAndRender(&gameMemory, newInput, &buffer, &soundBuffer);
-
-      if (soundIsValid) {
-        linux32FillSoundBuffer(audioHandler, avail, &soundBuffer);
-        if (!isSoundPlaying) {
-          int err = snd_pcm_start(audioHandler);
-          if (!err) {
-            isSoundPlaying = true;
-          }
-        }
-      }
-
-      // INFO: hack porque cuando cambia de core el tsc no se mantiene,
-      // entonces tengo picos y overflows. Quizas es malisimo lo que hice de
-      // los ifs, no se, no la tengo tan clara.
-
-      timespec endCounter = linux32GetTimeSpec();
-
-      uint64 nanoSecondsElapsedForWork =
-          linux32GetNanoSecondsElapsed(lastCounter, endCounter);
-
-      uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
-      if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
-        uint64 remainingNs =
-            targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
-        timespec targetSleep = {
-            .tv_sec = (time_t)(remainingNs / NS),
-            .tv_nsec = (int64)(remainingNs % NS),
-        };
-        timespec rem;
-        nanosleep(&targetSleep, &rem);
-
-        timespec testCounter = linux32GetTimeSpec();
-        uint64 testNanoSeconds =
-            linux32GetNanoSecondsElapsed(lastCounter, testCounter);
-        assert(testNanoSeconds > targetNanoSecondsPerFrame);
-        while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
-          timespec checkCounter = linux32GetTimeSpec();
-          nanoSecondsElapsedForFrame =
-              linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
-        }
-
-      } else {
-      }
-
-      endCounter = linux32GetTimeSpec();
-      real32 msPerFrame =
-          (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
-          1000000.0f;
-      real32 FPS = (real32)(1.0f / (real32)(msPerFrame / 1000.0f));
-
-      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                    screen->root_depth, gContext);
-
+        snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
+        snd_pcm_sframes_t framesWanted = 0;
+        if (avail >= 0) {
+          snd_pcm_sframes_t delay;
+          snd_pcm_delay(audioHandler, &delay);
 #if HANDMADE_INTERNAL
-      snd_pcm_sframes_t a = snd_pcm_avail_update(audioHandler);
+          printf("delay: %ld avail: %ld\n", delay, avail);
 #endif
-      game_input *temp = newInput;
-      newInput = oldInput;
-      oldInput = temp;
+          framesWanted = soundOutput.safetyFrames - delay;
+          if (framesWanted < 0) {
+            framesWanted = 0;
+          }
+          if (framesWanted > avail) {
+            framesWanted = avail;
+          }
 
-      char textBuffer[256];
-      uint64 endCycleCount = __rdtsc();
-      uint64 cyclesElapsed = endCycleCount - lastCycleCount;
-      if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
-        int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n",
-                          msPerFrame, FPS);
+          game_sound_output_buffer soundBuffer = {};
+          soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
+          soundBuffer.sampleCount = framesWanted;
+          soundBuffer.samples = samples;
+          getSoundSamples(&gameMemory, &soundBuffer);
+          linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
+          if (!isSoundPlaying) {
+            int err = snd_pcm_start(audioHandler);
+            if (!err) {
+              isSoundPlaying = true;
+            }
+          }
+        } else {
+#if HANDMADE_INTERNAL
+          int err = snd_pcm_recover(audioHandler, avail, 0);
+          isSoundPlaying = false;
+#endif
+        }
+
+        // INFO: hack porque cuando cambia de core el tsc no se mantiene,
+        // entonces tengo picos y overflows. Quizas es malisimo lo que hice de
+        // los ifs, no se, no la tengo tan clara.
+
+        timespec endCounter = linux32GetTimeSpec();
+
+        uint64 nanoSecondsElapsedForWork =
+            linux32GetNanoSecondsElapsed(lastCounter, endCounter);
+
+        uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
+        if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
+          uint64 remainingNs =
+              targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
+          timespec targetSleep = {
+              .tv_sec = (time_t)(remainingNs / NS),
+              .tv_nsec = (int64)(remainingNs % NS),
+          };
+          timespec rem;
+          nanosleep(&targetSleep, &rem);
+
+          timespec testCounter = linux32GetTimeSpec();
+          uint64 testNanoSeconds =
+              linux32GetNanoSecondsElapsed(lastCounter, testCounter);
+          if (testNanoSeconds > targetNanoSecondsPerFrame) {
+          }
+          while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
+            timespec checkCounter = linux32GetTimeSpec();
+            nanoSecondsElapsedForFrame =
+                linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
+          }
+
+        } else {
+        }
+
+        endCounter = linux32GetTimeSpec();
+        real32 msPerFrame =
+            (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
+            1000000.0f;
+        real32 FPS = (real32)(1.0f / (real32)(msPerFrame / 1000.0f));
+
+        linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                      screen->root_depth, gContext);
+
+        game_input *temp = newInput;
+        newInput = oldInput;
+        oldInput = temp;
+        char textBuffer[256];
+        uint64 endCycleCount = __rdtsc();
+        uint64 cyclesElapsed = endCycleCount - lastCycleCount;
+        if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
+          int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n",
+                            msPerFrame, FPS);
+          write(2, textBuffer, len);
+          lastCycleCount = endCycleCount;
+          lastCounter = endCounter;
+          continue;
+        }
+
+        real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
+
+        int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n",
+                          msPerFrame, FPS, MCPF);
         write(2, textBuffer, len);
-        lastCycleCount = endCycleCount;
+
         lastCounter = endCounter;
-        continue;
+
+        lastCycleCount = endCycleCount;
       }
-
-      real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
-
-      int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n", msPerFrame,
-                        FPS, MCPF);
-      write(2, textBuffer, len);
-
-      lastCounter = endCounter;
-
-      lastCycleCount = endCycleCount;
     }
   } else {
   }

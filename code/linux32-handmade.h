@@ -11,7 +11,7 @@ struct linux32_offscreen_buffer {
 struct linux32_sound_output {
   int framesPerSecond;
   uint32 bytesPerFrame;
-  int latencyFramesCount;
+  int safetyFrames;
 };
 
 #define LINUX32_HANDMADE_H

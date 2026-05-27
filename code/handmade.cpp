@@ -39,19 +39,26 @@ internal void gameOutputSound(game_sound_output_buffer *soundBuffer,
   }
 }
 
-internal void gameUpdateAndRender(game_memory *memory, game_input *input,
-                                  game_offscreen_buffer *buffer,
-                                  game_sound_output_buffer *soundBuffer) {
+internal void getSoundSamples(game_memory *memory,
+                              game_sound_output_buffer *soundBuffer) {
+  assert(sizeof(game_state) <= memory->permanentStorageSize);
+  game_state *gameState = (game_state *)memory->permanentStorage;
+  gameOutputSound(soundBuffer, gameState->toneHz);
+}
 
-  assert(
-      (int)(&input->controllers[0].terminator - &input->controllers[0].buttons[0]) ==
-      (int)(arrayCount(input->controllers[0].buttons)));
+internal void gameUpdateAndRender(game_memory *memory, game_input *input,
+                                  game_offscreen_buffer *buffer) {
+
+  assert((int)(&input->controllers[0].terminator -
+               &input->controllers[0].buttons[0]) ==
+         (int)(arrayCount(input->controllers[0].buttons)));
 
   assert(sizeof(game_state) <= memory->permanentStorageSize);
 
   game_state *gameState = (game_state *)memory->permanentStorage;
 
   if (!memory->isInitialized) {
+#if HANDMADE_INTERNAL
     char *filename = __FILE__;
     debug_read_file_result file = DEBUGPlatformReadEntireFile(filename);
     if (file.contents) {
@@ -59,6 +66,7 @@ internal void gameUpdateAndRender(game_memory *memory, game_input *input,
                                    file.contents);
       DEBUGPlatformFreeFileMemory(&file);
     }
+#endif
     gameState->blueOffset = 0;
     gameState->greenOffset = 0;
     gameState->toneHz = 256;
@@ -78,11 +86,15 @@ internal void gameUpdateAndRender(game_memory *memory, game_input *input,
       }
     }
 
+    if (controller->actionUp.endedDown) {
+      gameState->toneHz+=10;
+    }
+
     if (controller->actionDown.endedDown) {
       gameState->greenOffset++;
+      gameState->toneHz-=10;
     }
   }
 
-  gameOutputSound(soundBuffer, gameState->toneHz);
   renderWeirdGradient(buffer, gameState->blueOffset, gameState->greenOffset);
 }
