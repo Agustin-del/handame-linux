@@ -14,5 +14,11 @@ struct linux32_sound_output {
   int safetyFrames;
 };
 
+struct linux32_game_code {
+  void *gameCodeSO;
+  game_update_and_render *updateAndRender;
+  game_get_sound_samples *getSoundSamples;
+  bool32 isValid;
+};
 #define LINUX32_HANDMADE_H
 #endif

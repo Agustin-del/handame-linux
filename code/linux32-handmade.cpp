@@ -1,27 +1,4 @@
-#include <math.h>
-#include <stdint.h>
-#define internal static
-#define local_persist static
-#define global_variable static
-
-#define PI32 3.14159265359f
-#define NS 1000000000ULL
-
-typedef int8_t int8;
-typedef int16_t int16;
-typedef int32_t int32;
-typedef int64_t int64;
-typedef int32 bool32;
-
-typedef uint8_t uint8;
-typedef uint16_t uint16;
-typedef uint32_t uint32;
-typedef uint64_t uint64;
-
-typedef float real32;
-typedef double real64;
-
-#include "handmade.cpp"
+#include "handmade.h"
 #include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
 #include <dlfcn.h>
@@ -104,6 +81,39 @@ ALSA_FUNCTION(snd_pcm_hw_params);
 ALSA_FUNCTION(snd_strerror);
 #define snd_strerror snd_strerror_
 
+internal linux32_game_code linux32LoadGameCode() {
+  linux32_game_code result = {};
+  result.gameCodeSO = dlopen(
+      "/home/edmo/game-programming/handmade/build/handmade.so", RTLD_NOW);
+
+  if (result.gameCodeSO) {
+    result.updateAndRender = (game_update_and_render *)dlsym(
+        result.gameCodeSO, "gameUpdateAndRender");
+    result.getSoundSamples = (game_get_sound_samples *)dlsym(
+        result.gameCodeSO, "gameGetSoundSamples");
+
+    result.isValid = (result.getSoundSamples && result.updateAndRender);
+  }
+
+  if (!result.isValid) {
+
+    result.updateAndRender = gameUpdateAndRenderStub;
+    result.getSoundSamples = gameGetSoundSamplesStub;
+  }
+
+  return result;
+}
+
+internal void linux32UnloadGameCode(linux32_game_code *gameCode) {
+  if (gameCode->gameCodeSO) {
+    dlclose(gameCode->gameCodeSO);
+  }
+
+  gameCode->isValid = false;
+  gameCode->getSoundSamples = gameGetSoundSamplesStub;
+  gameCode->updateAndRender = gameUpdateAndRenderStub;
+}
+
 internal snd_pcm_t *linux32InitSound(int framesPerSecond) {
   void *alsaLib = dlopen("libasound.so.2", RTLD_NOW);
   if (alsaLib) {
@@ -123,7 +133,8 @@ internal snd_pcm_t *linux32InitSound(int framesPerSecond) {
 
     snd_pcm_delay = (typeof(snd_pcm_delay_))dlsym(alsaLib, "snd_pcm_delay");
 
-    snd_pcm_recover = (typeof(snd_pcm_recover_))dlsym(alsaLib, "snd_pcm_recover");
+    snd_pcm_recover =
+        (typeof(snd_pcm_recover_))dlsym(alsaLib, "snd_pcm_recover");
 
     snd_pcm_close = (typeof(snd_pcm_close_))dlsym(alsaLib, "snd_pcm_close");
 
@@ -200,7 +211,13 @@ internal xcb_atom_t linux32GetInternAtom(xcb_connection_t *conn,
 }
 
 #if HANDMADE_INTERNAL
-internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
+DEBUG_PLATFORM_FREE_FILE_MEMORY(DEBUGPlatformFreeFileMemory) {
+  munmap(file->contents, file->contentsSize);
+  file->contents = 0;
+  file->contentsSize = 0;
+}
+
+DEBUG_PLATFORM_READ_ENTIRE_FILE(DEBUGPlatformReadEntireFile) {
   debug_read_file_result result = {};
   int fd = open(filename, O_RDONLY);
   if (fd > 0) {
@@ -228,8 +245,7 @@ internal debug_read_file_result DEBUGPlatformReadEntireFile(char *filename) {
   return result;
 }
 
-internal bool32 DEBUGPlatformWriteEntireFile(char *filename, uint32 memorySize,
-                                             void *memory) {
+DEBUG_PLATFORM_WRITE_ENTIRE_FILE(DEBUGPlatformWriteEntireFile) {
   bool32 result = false;
   int fd = creat(filename, 0644);
   if (fd > 0) {
@@ -240,12 +256,6 @@ internal bool32 DEBUGPlatformWriteEntireFile(char *filename, uint32 memorySize,
   }
 
   return result;
-}
-
-internal void DEBUGPlatformFreeFileMemory(debug_read_file_result *file) {
-  munmap(file->contents, file->contentsSize);
-  file->contents = 0;
-  file->contentsSize = 0;
 }
 
 #endif
@@ -408,6 +418,7 @@ int main() {
   sched_setaffinity(0, sizeof(set), &set);
 
   */
+
   xcb_connection_t *conn = xcb_connect(0, 0);
   if (xcb_connection_has_error(conn)) {
     return 1;
@@ -488,11 +499,11 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
 
   assert(samples != MAP_FAILED);
 
+#if HANDMADE_INTERNAL
   timespec lastCounter = linux32GetTimeSpec();
 
   uint64 lastCycleCount = __rdtsc();
 
-#if HANDMADE_INTERNAL
   void *baseAddress = (void *)terabytes(2);
 #else
   void *baseAddress = 0;
@@ -502,6 +513,10 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
 
   gameMemory.permanentStorageSize = megabytes(64);
   gameMemory.transientStorageSize = gigabytes(4);
+
+  gameMemory.DEBUGPlatformReadEntireFile = DEBUGPlatformReadEntireFile;
+  gameMemory.DEBUGPlatformWriteEntireFile = DEBUGPlatformWriteEntireFile;
+  gameMemory.DEBUGPlatformFreeFileMemory = DEBUGPlatformFreeFileMemory;
 
   uint64 totalSize =
       gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
@@ -522,7 +537,15 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
 
+    linux32_game_code game = linux32LoadGameCode();
+    uint32 loadCounter = 0;
     while (globalRunning) {
+      if (loadCounter++ > 120) {
+
+        linux32UnloadGameCode(&game);
+        game = linux32LoadGameCode();
+        loadCounter = 0;
+      }
       game_controller_input *oldKeyboardController = getController(oldInput, 0);
       game_controller_input *newKeyboardController = getController(newInput, 0);
       game_controller_input zeroController = {};
@@ -583,7 +606,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
         buffer.pitch = globalBackbuffer.pitch;
 
-        gameUpdateAndRender(&gameMemory, newInput, &buffer);
+        game.updateAndRender(&gameMemory, newInput, &buffer);
 
         snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
         snd_pcm_sframes_t framesWanted = 0;
@@ -594,9 +617,6 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
           printf("delay: %ld avail: %ld\n", delay, avail);
 #endif
           framesWanted = soundOutput.safetyFrames - delay;
-          if (framesWanted < 0) {
-            framesWanted = 0;
-          }
           if (framesWanted > avail) {
             framesWanted = avail;
           }
@@ -605,7 +625,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
           soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
           soundBuffer.sampleCount = framesWanted;
           soundBuffer.samples = samples;
-          getSoundSamples(&gameMemory, &soundBuffer);
+          game.getSoundSamples(&gameMemory, &soundBuffer);
           linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
           if (!isSoundPlaying) {
             int err = snd_pcm_start(audioHandler);
@@ -613,11 +633,11 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
               isSoundPlaying = true;
             }
           }
-        } else {
+        }
 #if HANDMADE_INTERNAL
+        else {
           int err = snd_pcm_recover(audioHandler, avail, 0);
           isSoundPlaying = false;
-#endif
         }
 
         // INFO: hack porque cuando cambia de core el tsc no se mantiene,
@@ -659,6 +679,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
             (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
             1000000.0f;
         real32 FPS = (real32)(1.0f / (real32)(msPerFrame / 1000.0f));
+#endif
 
         linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
                                       screen->root_depth, gContext);
@@ -666,6 +687,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         game_input *temp = newInput;
         newInput = oldInput;
         oldInput = temp;
+#if HANDMADE_INTERNAL
         char textBuffer[256];
         uint64 endCycleCount = __rdtsc();
         uint64 cyclesElapsed = endCycleCount - lastCycleCount;
@@ -687,6 +709,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         lastCounter = endCounter;
 
         lastCycleCount = endCycleCount;
+#endif
       }
     }
   } else {

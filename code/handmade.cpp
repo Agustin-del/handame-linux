@@ -6,48 +6,44 @@ internal void renderWeirdGradient(game_offscreen_buffer *buffer, int xOffset,
   for (int y = 0; y < buffer->height; ++y) {
     uint32 *pixel = (uint32 *)row;
     for (int x = 0; x < buffer->width; ++x) {
-      uint8 blue = x + xOffset;
-      uint8 green = y + yOffset;
+      uint8 blue = (uint8)(x + xOffset);
+      uint8 green = (uint8)(y + yOffset);
       *pixel++ = (green << 8) | blue;
     }
     row += buffer->pitch;
   }
 }
 
-internal void gameOutputSound(game_sound_output_buffer *soundBuffer,
-                              int toneHz) {
+internal void gameOutputSound(game_state *gameState, game_sound_output_buffer *soundBuffer) {
 
-  local_persist real32 tSine = 0;
-  int16 toneVolume = 3000;
-  int wavePeriod = soundBuffer->samplesPerSecond / toneHz;
+  int16 toneVolume = 4000;
+  int wavePeriod = soundBuffer->samplesPerSecond / (gameState->toneHz);
   int16 *sampleOut = soundBuffer->samples;
 
   for (int sampleIndex = 0; sampleIndex < soundBuffer->sampleCount;
        ++sampleIndex) {
 
-    real32 sineValue = sinf(tSine);
+    real32 sineValue = sinf(gameState->tSine);
 
     int16 sampleValue = (int16)(sineValue * toneVolume);
 
     *sampleOut++ = sampleValue;
     *sampleOut++ = sampleValue;
 
-    tSine += 2.0f * PI32 / (real32)wavePeriod;
-    while (tSine > 2.0f * PI32) {
-      tSine -= 2.0f * PI32;
+    gameState->tSine += 2.0f * PI32 / (real32)wavePeriod;
+    if (gameState->tSine > 2.0f * PI32) {
+      gameState->tSine -= 2.0f * PI32;
     }
   }
 }
 
-internal void getSoundSamples(game_memory *memory,
-                              game_sound_output_buffer *soundBuffer) {
+extern "C" GAME_GET_SOUND_SAMPLES(gameGetSoundSamples){
   assert(sizeof(game_state) <= memory->permanentStorageSize);
   game_state *gameState = (game_state *)memory->permanentStorage;
-  gameOutputSound(soundBuffer, gameState->toneHz);
+  gameOutputSound(gameState, soundBuffer);
 }
 
-internal void gameUpdateAndRender(game_memory *memory, game_input *input,
-                                  game_offscreen_buffer *buffer) {
+extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender){
 
   assert((int)(&input->controllers[0].terminator -
                &input->controllers[0].buttons[0]) ==
@@ -58,18 +54,19 @@ internal void gameUpdateAndRender(game_memory *memory, game_input *input,
   game_state *gameState = (game_state *)memory->permanentStorage;
 
   if (!memory->isInitialized) {
-#if HANDMADE_INTERNAL
+#if HANDMADE_INTERNAL 
     char *filename = __FILE__;
-    debug_read_file_result file = DEBUGPlatformReadEntireFile(filename);
+    debug_read_file_result file = memory->DEBUGPlatformReadEntireFile(filename);
     if (file.contents) {
-      DEBUGPlatformWriteEntireFile("build/test.out", file.contentsSize,
+      memory->DEBUGPlatformWriteEntireFile("build/test.out", file.contentsSize,
                                    file.contents);
-      DEBUGPlatformFreeFileMemory(&file);
+      memory->DEBUGPlatformFreeFileMemory(&file);
     }
 #endif
     gameState->blueOffset = 0;
     gameState->greenOffset = 0;
     gameState->toneHz = 256;
+    gameState->tSine = 0.0f;
     memory->isInitialized = true;
   }
   for (int controllerIdx = 0;
