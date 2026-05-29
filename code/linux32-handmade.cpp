@@ -1,11 +1,14 @@
 #include "handmade.h"
 #include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
+#include <cstddef>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -81,10 +84,24 @@ ALSA_FUNCTION(snd_pcm_hw_params);
 ALSA_FUNCTION(snd_strerror);
 #define snd_strerror snd_strerror_
 
-internal linux32_game_code linux32LoadGameCode() {
+inline timespec linux32GetLastWriteTime(char *sourceSOName) {
+
+  char textBuffer[1024];
+  getcwd(textBuffer, sizeof(textBuffer));
+  snprintf(textBuffer, sizeof(textBuffer), "%s/build/%s", textBuffer, sourceSOName);
+
+  struct stat result;
+  stat(textBuffer, &result);
+  return result.st_mtim;
+}
+
+internal linux32_game_code linux32LoadGameCode(char *sourceSOName) {
   linux32_game_code result = {};
-  result.gameCodeSO = dlopen(
-      "/home/edmo/game-programming/handmade/build/handmade.so", RTLD_NOW);
+  result.SOLastWriteTime = linux32GetLastWriteTime(sourceSOName);
+  /*INFO: no copio porque el so abre el so y lo cierra despues de mapearlo
+  Ademas no tuve mejor resultado copiando. Sigo teniendo el glitch.*/
+
+  result.gameCodeSO = dlopen(sourceSOName, RTLD_NOW);
 
   if (result.gameCodeSO) {
     result.updateAndRender = (game_update_and_render *)dlsym(
@@ -537,15 +554,17 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
 
-    linux32_game_code game = linux32LoadGameCode();
-    uint32 loadCounter = 0;
+    char *sourceSOName = "handmade.so";
+    linux32_game_code game = linux32LoadGameCode(sourceSOName);
     while (globalRunning) {
-      if (loadCounter++ > 120) {
-
+      timespec newWriteSO = linux32GetLastWriteTime(sourceSOName);
+      if (newWriteSO.tv_sec != game.SOLastWriteTime.tv_sec ||
+           newWriteSO.tv_nsec != game.SOLastWriteTime.tv_nsec) {
         linux32UnloadGameCode(&game);
-        game = linux32LoadGameCode();
-        loadCounter = 0;
+        game = linux32LoadGameCode(sourceSOName);
+        game.SOLastWriteTime = newWriteSO;
       }
+
       game_controller_input *oldKeyboardController = getController(oldInput, 0);
       game_controller_input *newKeyboardController = getController(newInput, 0);
       game_controller_input zeroController = {};

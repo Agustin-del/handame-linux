@@ -19,6 +19,7 @@ struct linux32_game_code {
   game_update_and_render *updateAndRender;
   game_get_sound_samples *getSoundSamples;
   bool32 isValid;
+  timespec SOLastWriteTime;
 };
 #define LINUX32_HANDMADE_H
 #endif
