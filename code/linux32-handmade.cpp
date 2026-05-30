@@ -1,10 +1,10 @@
 #include "handmade.h"
 #include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
-#include <cstddef>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <linux/fs.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,23 +86,23 @@ ALSA_FUNCTION(snd_strerror);
 
 inline timespec linux32GetLastWriteTime(char *sourceSOName) {
 
-  char textBuffer[1024];
-  getcwd(textBuffer, sizeof(textBuffer));
-  snprintf(textBuffer, sizeof(textBuffer), "%s/build/%s", textBuffer, sourceSOName);
-
   struct stat result;
-  stat(textBuffer, &result);
+  stat(sourceSOName, &result);
   return result.st_mtim;
 }
 
-internal linux32_game_code linux32LoadGameCode(char *sourceSOName) {
+internal linux32_game_code linux32LoadGameCode(char *sourceSOName,
+                                               char *tempSOName) {
   linux32_game_code result = {};
   result.SOLastWriteTime = linux32GetLastWriteTime(sourceSOName);
   /*INFO: no copio porque el so abre el so y lo cierra despues de mapearlo
   Ademas no tuve mejor resultado copiando. Sigo teniendo el glitch.*/
 
-  result.gameCodeSO = dlopen(sourceSOName, RTLD_NOW);
+  int SOFD = open(sourceSOName, O_RDONLY);
+  int tempSO = creat(tempSOName, 0755);
+  int ret = ioctl(tempSO, FICLONE, SOFD);
 
+  result.gameCodeSO = dlopen(tempSOName, RTLD_NOW);
   if (result.gameCodeSO) {
     result.updateAndRender = (game_update_and_render *)dlsym(
         result.gameCodeSO, "gameUpdateAndRender");
@@ -339,8 +339,57 @@ internal void linux32ProcessKey(game_button_state *newState, bool32 isDown) {
   }
 }
 
+internal void linux32BeginRecordingInput(linux32_state *linux32State,
+                                         int inputRecordingIndex) {
+  linux32State->inputRecordingIndex = inputRecordingIndex;
+  char *filename = "foo.hmi";
+  linux32State->recordingFD = creat(filename, 0644);
+  uint32 bytesToRead = linux32State->totalSize;
+  assert(linux32State->totalSize == bytesToRead);
+  write(linux32State->recordingFD, linux32State->gameMemoryBlock, bytesToRead);
+}
+
+internal void linux32EndRecordingInput(linux32_state *linux32State) {
+  close(linux32State->recordingFD);
+  linux32State->inputRecordingIndex = 0;
+}
+
+internal void linux32RecordInput(linux32_state *linux32State,
+                                 game_input *newInput) {
+  int wCount = write(linux32State->recordingFD, newInput, sizeof(*newInput));
+}
+
+internal void linux32BeginInputPlayback(linux32_state *linux32State,
+                                        int inputPlayingIndex) {
+  linux32State->inputPlayingIndex = inputPlayingIndex;
+  char *filename = "foo.hmi";
+  linux32State->playbackFD = open(filename, O_RDONLY);
+  uint32 bytesToWrite = linux32State->totalSize;
+  assert(linux32State->totalSize == bytesToWrite);
+  read(linux32State->playbackFD, linux32State->gameMemoryBlock, bytesToWrite);
+}
+
+internal void linux32EndPlaybackInput(linux32_state *linux32State) {
+  close(linux32State->playbackFD);
+  linux32State->inputPlayingIndex = 0;
+}
+
+internal void linux32PlaybackInput(linux32_state *linux32State,
+                                   game_input *newInput) {
+  int rCount = read(linux32State->playbackFD, newInput, sizeof(*newInput));
+
+  if (rCount <= 0) {
+    int playingIndex = linux32State->inputPlayingIndex;
+    linux32EndPlaybackInput(linux32State);
+    linux32BeginInputPlayback(linux32State, playingIndex);
+  } else {
+  }
+}
+
+
 internal void
-linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
+linux32ProcessKeyboardMessage(linux32_state *linux32State,
+                              xcb_key_press_event_t *event,
                               game_controller_input *keyboardController) {
 
   bool32 isDown = (event->response_type == XCB_KEY_PRESS);
@@ -376,6 +425,17 @@ linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
   case 40: {
     linux32ProcessKey(&keyboardController->moveRight, isDown);
   } break;
+    // 46 == 'L'
+  case 46: {
+    if (isDown) {
+      if (linux32State->inputRecordingIndex == 0) {
+        linux32BeginRecordingInput(linux32State, 1);
+      } else {
+        linux32EndRecordingInput(linux32State);
+        linux32BeginInputPlayback(linux32State, 1);
+      }
+    }
+  } break;
     // 111 == UP
   case 111: {
     linux32ProcessKey(&keyboardController->actionUp, isDown);
@@ -403,10 +463,6 @@ linux32ProcessKeyboardMessage(xcb_key_press_event_t *event,
   }
 }
 
-// fijarse si cambiando la fase(creo que se llama asi se empieza a reproducir
-// al inicio)
-//
-
 inline timespec linux32GetTimeSpec() {
   struct timespec result;
   clock_gettime(CLOCK_MONOTONIC_RAW, &result);
@@ -421,9 +477,7 @@ inline uint64 linux32GetNanoSecondsElapsed(timespec start, timespec end) {
 }
 
 int main() {
-
-  /*
-   * INFO: tambien como otro hack, en vez de cortar los picos o fijarse por
+  /* INFO: tambien como otro hack, en vez de cortar los picos o fijarse por
   overflow
    * puedo setear el hilo a que corra en un solo nucleo
   #include <sched.h>
@@ -509,6 +563,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
+  linux32_state linux32State = {};
   globalRunning = true;
   int16 *samples =
       (int16 *)mmap(0, soundOutput.framesPerSecond * soundOutput.bytesPerFrame,
@@ -529,18 +584,18 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
   game_memory gameMemory = {};
 
   gameMemory.permanentStorageSize = megabytes(64);
-  gameMemory.transientStorageSize = gigabytes(4);
+  gameMemory.transientStorageSize = gigabytes(1);
 
   gameMemory.DEBUGPlatformReadEntireFile = DEBUGPlatformReadEntireFile;
   gameMemory.DEBUGPlatformWriteEntireFile = DEBUGPlatformWriteEntireFile;
   gameMemory.DEBUGPlatformFreeFileMemory = DEBUGPlatformFreeFileMemory;
 
-  uint64 totalSize =
+  linux32State.totalSize =
       gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
 
-  gameMemory.permanentStorage =
-      mmap(baseAddress, totalSize, PROT_READ | PROT_WRITE,
-           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  linux32State.gameMemoryBlock = mmap(baseAddress, linux32State.totalSize, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  gameMemory.permanentStorage = linux32State.gameMemoryBlock;
 
   assert(gameMemory.permanentStorage != MAP_FAILED);
 
@@ -554,14 +609,15 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
 
-    char *sourceSOName = "handmade.so";
-    linux32_game_code game = linux32LoadGameCode(sourceSOName);
+    char *sourceSOName = "build/handmade.so";
+    char *tempSOName = "build/handmade-tmp.so";
+    linux32_game_code game = linux32LoadGameCode(sourceSOName, tempSOName);
     while (globalRunning) {
       timespec newWriteSO = linux32GetLastWriteTime(sourceSOName);
       if (newWriteSO.tv_sec != game.SOLastWriteTime.tv_sec ||
-           newWriteSO.tv_nsec != game.SOLastWriteTime.tv_nsec) {
+          newWriteSO.tv_nsec != game.SOLastWriteTime.tv_nsec) {
         linux32UnloadGameCode(&game);
-        game = linux32LoadGameCode(sourceSOName);
+        game = linux32LoadGameCode(sourceSOName, tempSOName);
         game.SOLastWriteTime = newWriteSO;
       }
 
@@ -592,7 +648,8 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         } break;
         case XCB_KEY_PRESS:
         case XCB_KEY_RELEASE: {
-          linux32ProcessKeyboardMessage((xcb_key_press_event_t *)event,
+          linux32ProcessKeyboardMessage(&linux32State,
+                                        (xcb_key_press_event_t *)event,
                                         newKeyboardController);
         } break;
         case XCB_FOCUS_IN: {
@@ -625,6 +682,13 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
         buffer.pitch = globalBackbuffer.pitch;
 
+        if (linux32State.inputRecordingIndex) {
+          linux32RecordInput(&linux32State, newInput);
+        }
+
+        if (linux32State.inputPlayingIndex) {
+          linux32PlaybackInput(&linux32State, newInput);
+        }
         game.updateAndRender(&gameMemory, newInput, &buffer);
 
         snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);

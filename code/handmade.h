@@ -162,6 +162,11 @@ struct game_state {
   int greenOffset;
   int blueOffset;
   real32 tSine;
+
+  int playerX;
+  int playerY;
+
+  real32 tJump;
 };
 
 #define HANDMADE_H

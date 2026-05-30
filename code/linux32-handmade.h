@@ -18,8 +18,19 @@ struct linux32_game_code {
   void *gameCodeSO;
   game_update_and_render *updateAndRender;
   game_get_sound_samples *getSoundSamples;
-  bool32 isValid;
   timespec SOLastWriteTime;
+  bool32 isValid;
+};
+
+struct linux32_state {
+  uint64 totalSize;
+  void *gameMemoryBlock;
+
+  int recordingFD;
+  int inputRecordingIndex;
+
+  int playbackFD;
+  int inputPlayingIndex;
 };
 #define LINUX32_HANDMADE_H
 #endif
