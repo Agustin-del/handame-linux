@@ -2,10 +2,10 @@
 
 struct linux32_offscreen_buffer {
   void *memory;
-  uint16 width;
-  uint16 height;
   int bytesPerPixel;
   int pitch;
+  uint16 width;
+  uint16 height;
 };
 
 struct linux32_sound_output {

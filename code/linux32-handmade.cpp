@@ -114,8 +114,8 @@ internal linux32_game_code linux32LoadGameCode(char *sourceSOName,
 
   if (!result.isValid) {
 
-    result.updateAndRender = gameUpdateAndRenderStub;
-    result.getSoundSamples = gameGetSoundSamplesStub;
+    result.updateAndRender = 0;
+    result.getSoundSamples = 0;
   }
 
   return result;
@@ -127,8 +127,8 @@ internal void linux32UnloadGameCode(linux32_game_code *gameCode) {
   }
 
   gameCode->isValid = false;
-  gameCode->getSoundSamples = gameGetSoundSamplesStub;
-  gameCode->updateAndRender = gameUpdateAndRenderStub;
+  gameCode->getSoundSamples = 0;
+  gameCode->updateAndRender = 0;
 }
 
 internal snd_pcm_t *linux32InitSound(int framesPerSecond) {
@@ -319,6 +319,7 @@ internal void linux32XResizeBackBuffer(linux32_offscreen_buffer *buffer,
   buffer->pitch = width * buffer->bytesPerPixel;
 }
 
+// TODO:Investigar shm
 internal void linux32XDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
                                             xcb_connection_t *conn,
                                             xcb_window_t window, uint8 depth,
@@ -342,7 +343,7 @@ internal void linux32ProcessKey(game_button_state *newState, bool32 isDown) {
 internal void linux32BeginRecordingInput(linux32_state *linux32State,
                                          int inputRecordingIndex) {
   linux32State->inputRecordingIndex = inputRecordingIndex;
-  char *filename = "foo.hmi";
+  char *filename = "build/foo.hmi";
   linux32State->recordingFD = creat(filename, 0644);
   uint32 bytesToRead = linux32State->totalSize;
   assert(linux32State->totalSize == bytesToRead);
@@ -356,13 +357,14 @@ internal void linux32EndRecordingInput(linux32_state *linux32State) {
 
 internal void linux32RecordInput(linux32_state *linux32State,
                                  game_input *newInput) {
-  int wCount = write(linux32State->recordingFD, newInput, sizeof(*newInput));
+  write(linux32State->recordingFD, newInput, sizeof(*newInput));
 }
 
+// Se podria hacer con un solo fd creo. Y abrirlo con permisos read/write.
 internal void linux32BeginInputPlayback(linux32_state *linux32State,
                                         int inputPlayingIndex) {
   linux32State->inputPlayingIndex = inputPlayingIndex;
-  char *filename = "foo.hmi";
+  char *filename = "build/foo.hmi";
   linux32State->playbackFD = open(filename, O_RDONLY);
   uint32 bytesToWrite = linux32State->totalSize;
   assert(linux32State->totalSize == bytesToWrite);
@@ -382,10 +384,10 @@ internal void linux32PlaybackInput(linux32_state *linux32State,
     int playingIndex = linux32State->inputPlayingIndex;
     linux32EndPlaybackInput(linux32State);
     linux32BeginInputPlayback(linux32State, playingIndex);
+    read(linux32State->playbackFD, newInput, sizeof(*newInput));
   } else {
   }
 }
-
 
 internal void
 linux32ProcessKeyboardMessage(linux32_state *linux32State,
@@ -593,10 +595,10 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
   linux32State.totalSize =
       gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
 
-  linux32State.gameMemoryBlock = mmap(baseAddress, linux32State.totalSize, PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  linux32State.gameMemoryBlock =
+      mmap(baseAddress, linux32State.totalSize, PROT_READ | PROT_WRITE,
+           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   gameMemory.permanentStorage = linux32State.gameMemoryBlock;
-
   assert(gameMemory.permanentStorage != MAP_FAILED);
 
   gameMemory.transientStorage =
@@ -675,12 +677,17 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
       }
 
       if (!globalPause) {
+        // Creo que podria usar el mismo buffer en vez de crear espacio
+        // va no estoy alocando nada nuevo, pero tampoco tengo nada distinto
+        // entre el buffer de plataforma y el del juego.
+        /*
         game_offscreen_buffer buffer = {};
         buffer.memory = globalBackbuffer.memory;
         buffer.width = globalBackbuffer.width;
         buffer.height = globalBackbuffer.height;
         buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
         buffer.pitch = globalBackbuffer.pitch;
+        */
 
         if (linux32State.inputRecordingIndex) {
           linux32RecordInput(&linux32State, newInput);
@@ -689,7 +696,11 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         if (linux32State.inputPlayingIndex) {
           linux32PlaybackInput(&linux32State, newInput);
         }
-        game.updateAndRender(&gameMemory, newInput, &buffer);
+
+        if (game.updateAndRender) {
+          game.updateAndRender(&gameMemory, newInput,
+                               (game_offscreen_buffer *)&globalBackbuffer);
+        }
 
         snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
         snd_pcm_sframes_t framesWanted = 0;
@@ -708,7 +719,10 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
           soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
           soundBuffer.sampleCount = framesWanted;
           soundBuffer.samples = samples;
-          game.getSoundSamples(&gameMemory, &soundBuffer);
+          if(game.getSoundSamples) {
+            game.getSoundSamples(&gameMemory, &soundBuffer);
+          }
+
           linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
           if (!isSoundPlaying) {
             int err = snd_pcm_start(audioHandler);
