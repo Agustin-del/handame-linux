@@ -355,16 +355,16 @@ internal void linux32BeginRecordingInput(linux32_state *linux32State,
       getReplayBuffer(linux32State, inputRecordingIndex);
   if (replayBuffer->memoryBlock) {
     linux32State->inputRecordingIndex = inputRecordingIndex;
-    linux32State->recordingFD = replayBuffer->replayFD;
+    linux32State->recordingFD = open("build/input.hmi", O_CREAT | O_WRONLY | O_TRUNC, 0644);
     uint64 bytesToWrite = linux32State->totalSize;
     assert(linux32State->totalSize == bytesToWrite);
     memcpy(replayBuffer->memoryBlock, linux32State->gameMemoryBlock,
            bytesToWrite);
-    lseek(linux32State->recordingFD, bytesToWrite, SEEK_SET);
   }
 }
 
 internal void linux32EndRecordingInput(linux32_state *linux32State) {
+  close(linux32State->recordingFD);
   linux32State->inputRecordingIndex = 0;
 }
 
@@ -379,17 +379,16 @@ internal void linux32BeginInputPlayback(linux32_state *linux32State,
       getReplayBuffer(linux32State, inputPlayingIndex);
   if (replayBuffer->memoryBlock) {
     linux32State->inputPlayingIndex = inputPlayingIndex;
-    lseek(replayBuffer->replayFD, 0, SEEK_SET);
-    linux32State->playbackFD = replayBuffer->replayFD;
+    linux32State->playbackFD = open("build/input.hmi", O_RDONLY);
     uint32 bytesToRead = linux32State->totalSize;
     assert(linux32State->totalSize == bytesToRead);
     memcpy(linux32State->gameMemoryBlock, replayBuffer->memoryBlock,
            bytesToRead);
-    lseek(linux32State->playbackFD, linux32State->totalSize, SEEK_SET);
   }
 }
 
 internal void linux32EndPlaybackInput(linux32_state *linux32State) {
+  close(linux32State->playbackFD);
   linux32State->inputPlayingIndex = 0;
 }
 
@@ -574,7 +573,6 @@ int main() {
   }
   xcb_map_window(conn, window);
 
-
   real32 gameUpdateHz = (real32)monitorRefreshHz / 2.0f;
   uint64 targetNanoSecondsPerFrame = NS / gameUpdateHz;
 
@@ -742,9 +740,9 @@ int main() {
 
         if (linux32State.inputRecordingIndex) {
           linux32RecordInput(&linux32State, newInput);
-        }
-
+        } 
         if (linux32State.inputPlayingIndex) {
+
           linux32PlaybackInput(&linux32State, newInput);
         }
 
