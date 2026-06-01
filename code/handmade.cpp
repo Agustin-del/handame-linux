@@ -83,10 +83,11 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   if (!memory->isInitialized) {
 #if HANDMADE_INTERNAL
     char *filename = __FILE__;
-    debug_read_file_result file = memory->DEBUGPlatformReadEntireFile(thread, filename);
+    debug_read_file_result file =
+        memory->DEBUGPlatformReadEntireFile(thread, filename);
     if (file.contents) {
-      memory->DEBUGPlatformWriteEntireFile(thread, "build/test.out", file.contentsSize,
-                                           file.contents);
+      memory->DEBUGPlatformWriteEntireFile(thread, "build/test.out",
+                                           file.contentsSize, file.contents);
       memory->DEBUGPlatformFreeFileMemory(thread, &file);
     }
 #endif
@@ -122,9 +123,9 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
       gameState->playerY -= 4;
     }
 
-    if(gameState->tJump > 0) {
+    if (gameState->tJump > 0) {
       gameState->playerY += (int)(5.0f * sinf(0.5f * PI32 * gameState->tJump));
-    } 
+    }
 
     if (controller->actionUp.endedDown) {
       gameState->tJump = 4.0f;
@@ -136,5 +137,13 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   renderWeirdGradient(buffer, gameState->blueOffset, gameState->greenOffset);
 
   renderPlayer(buffer, gameState->playerX, gameState->playerY);
+
   renderPlayer(buffer, input->mouseX, input->mouseY);
+  for (int buttonIndex = 0; buttonIndex < (int)arrayCount(input->mouseButtons);
+       ++buttonIndex) {
+    if (input->mouseButtons[buttonIndex].endedDown) {
+
+      renderPlayer(buffer, (10 + 20 * buttonIndex), 10);
+    }
+  }
 }

@@ -355,7 +355,8 @@ internal void linux32BeginRecordingInput(linux32_state *linux32State,
       getReplayBuffer(linux32State, inputRecordingIndex);
   if (replayBuffer->memoryBlock) {
     linux32State->inputRecordingIndex = inputRecordingIndex;
-    linux32State->recordingFD = open("build/input.hmi", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    linux32State->recordingFD =
+        open("build/input.hmi", O_CREAT | O_WRONLY | O_TRUNC, 0644);
     uint64 bytesToWrite = linux32State->totalSize;
     assert(linux32State->totalSize == bytesToWrite);
     memcpy(replayBuffer->memoryBlock, linux32State->gameMemoryBlock,
@@ -446,11 +447,16 @@ linux32ProcessKeyboardMessage(linux32_state *linux32State,
     // 46 == 'L'
   case 46: {
     if (isDown) {
-      if (linux32State->inputRecordingIndex == 0) {
-        linux32BeginRecordingInput(linux32State, 1);
+      if (linux32State->inputPlayingIndex == 0) {
+
+        if (linux32State->inputRecordingIndex == 0) {
+          linux32BeginRecordingInput(linux32State, 1);
+        } else {
+          linux32EndRecordingInput(linux32State);
+          linux32BeginInputPlayback(linux32State, 1);
+        }
       } else {
-        linux32EndRecordingInput(linux32State);
-        linux32BeginInputPlayback(linux32State, 1);
+        linux32EndPlaybackInput(linux32State);
       }
     }
   } break;
@@ -517,16 +523,19 @@ int main() {
   linux32XResizeBackBuffer(&globalBackbuffer, 1280, 720);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
-  xcb_event_mask_t events =
-      (xcb_event_mask_t)(XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_EXPOSURE |
-                         XCB_EVENT_MASK_STRUCTURE_NOTIFY |
-                         XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE);
 
+  xcb_event_mask_t events =
+      (xcb_event_mask_t)(XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE |
+                         XCB_EVENT_MASK_BUTTON_PRESS |
+                         XCB_EVENT_MASK_BUTTON_RELEASE |
+                         XCB_EVENT_MASK_POINTER_MOTION |
+                         XCB_EVENT_MASK_EXPOSURE |
+                         XCB_EVENT_MASK_STRUCTURE_NOTIFY |
+                         XCB_EVENT_MASK_FOCUS_CHANGE);
   xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0,
                     screen->width_in_pixels, screen->height_in_pixels, 10,
                     XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT,
                     XCB_CW_EVENT_MASK, &events);
-
   /*
    * INFO: esto si realmente algun dia quisiese hacerlo en serio tendria que
    * entender un poco mas aunque ahora me lo pone fullscreen, a mi me suena
@@ -557,6 +566,16 @@ int main() {
   xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND,
                 &screen->black_pixel);
 
+  xcb_pixmap_t pixmap = xcb_generate_id(conn);
+  xcb_create_pixmap(conn, 1, pixmap, window, 1, 1);
+  xcb_gcontext_t gc = xcb_generate_id(conn);
+  xcb_create_gc(conn, gc, pixmap, 0, NULL);
+  xcb_cursor_t blankCursor = xcb_generate_id(conn);
+  xcb_create_cursor(conn, blankCursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 1, 1);
+  xcb_change_window_attributes(conn, window, XCB_CW_CURSOR, &blankCursor);
+  xcb_free_cursor(conn, blankCursor);
+  xcb_free_pixmap(conn, pixmap);
+  xcb_free_gc(conn, gc);
   int monitorRefreshHz = 60;
 
   xcb_randr_get_screen_info_cookie_t infoCookie =
@@ -668,8 +687,14 @@ int main() {
         game.SOLastWriteTime = newWriteSO;
       }
 
-      newInput->mouseX = 50;
-      newInput->mouseY = 50;
+      newInput->mouseX = oldInput->mouseX;
+      newInput->mouseY = oldInput->mouseY;
+
+      for (int buttonIdx = 0;
+           buttonIdx < (int)arrayCount(newInput->mouseButtons); ++buttonIdx) {
+        newInput->mouseButtons[buttonIdx].endedDown =
+            oldInput->mouseButtons[buttonIdx].endedDown;
+      }
 
       game_controller_input *oldKeyboardController = getController(oldInput, 0);
       game_controller_input *newKeyboardController = getController(newInput, 0);
@@ -702,138 +727,163 @@ int main() {
                                         (xcb_key_press_event_t *)event,
                                         newKeyboardController);
         } break;
-        case XCB_FOCUS_IN: {
+        case XCB_MOTION_NOTIFY: {
+          xcb_motion_notify_event_t *mne = (xcb_motion_notify_event_t *)event;
+          newInput->mouseX = mne->event_x;
+          newInput->mouseY = mne->event_y;
+        } break;
 
-        } break;
-        case XCB_FOCUS_OUT: {
-        } break;
-        case XCB_EXPOSE: {
-          xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
-          if (ee->count == 0) {
-            linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
-                                          screen->root_depth, gContext);
+        case XCB_BUTTON_RELEASE:
+        case XCB_BUTTON_PRESS: {
+          xcb_button_press_event_t *pe = (xcb_button_press_event_t *)event;
+          bool32 isDown = (event->response_type == XCB_BUTTON_PRESS);
+          if (pe->detail == 1) {
+            linux32ProcessKey(&newInput->mouseButtons[0], isDown);
           }
-        } break;
-        case XCB_CONFIGURE_NOTIFY: {
-        } break;
-
-        default: {
-
-        } break;
+          if (pe->detail == 2) {
+            linux32ProcessKey(&newInput->mouseButtons[1], isDown);
+          }
+          if (pe->detail == 3) {
+            linux32ProcessKey(&newInput->mouseButtons[2], isDown);
+          }
         }
-        free(event);
+        break;
+      case XCB_FOCUS_IN: {
+
+      } break;
+      case XCB_FOCUS_OUT: {
+      } break;
+      case XCB_EXPOSE: {
+        /*
+xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
+if (ee->count == 0) {
+linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
+                       screen->root_depth, gContext);
+}
+*/
+      } break;
+      case XCB_CONFIGURE_NOTIFY: {
+      } break;
+
+      default: {
+
+      } break;
+      }
+      free(event);
+    }
+
+    if (!globalPause) {
+      thread_context thread = {};
+
+      // Creo que podria usar el mismo buffer en vez de crear espacio
+      // va no estoy alocando nada nuevo, pero tampoco tengo nada distinto
+      // entre el buffer de plataforma y el del juego.
+      /*
+      game_offscreen_buffer buffer = {};
+      buffer.memory = globalBackbuffer.memory;
+      buffer.width = globalBackbuffer.width;
+      buffer.height = globalBackbuffer.height;
+      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
+      buffer.pitch = globalBackbuffer.pitch;
+      */
+
+      if (linux32State.inputRecordingIndex) {
+        linux32RecordInput(&linux32State, newInput);
+      }
+      if (linux32State.inputPlayingIndex) {
+
+        linux32PlaybackInput(&linux32State, newInput);
       }
 
-      if (!globalPause) {
-        thread_context thread = {};
-        // Creo que podria usar el mismo buffer en vez de crear espacio
-        // va no estoy alocando nada nuevo, pero tampoco tengo nada distinto
-        // entre el buffer de plataforma y el del juego.
-        /*
-        game_offscreen_buffer buffer = {};
-        buffer.memory = globalBackbuffer.memory;
-        buffer.width = globalBackbuffer.width;
-        buffer.height = globalBackbuffer.height;
-        buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
-        buffer.pitch = globalBackbuffer.pitch;
-        */
+      if (game.updateAndRender) {
+        game.updateAndRender(&thread, &gameMemory, newInput,
+                             (game_offscreen_buffer *)&globalBackbuffer);
+      }
 
-        if (linux32State.inputRecordingIndex) {
-          linux32RecordInput(&linux32State, newInput);
-        } 
-        if (linux32State.inputPlayingIndex) {
-
-          linux32PlaybackInput(&linux32State, newInput);
+      snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
+      snd_pcm_sframes_t framesWanted = 0;
+      if (avail >= 0) {
+        snd_pcm_sframes_t delay;
+        snd_pcm_delay(audioHandler, &delay);
+        framesWanted = soundOutput.safetyFrames - delay;
+        if (framesWanted > avail) {
+          framesWanted = avail;
         }
 
-        if (game.updateAndRender) {
-          game.updateAndRender(&thread, &gameMemory, newInput,
-                               (game_offscreen_buffer *)&globalBackbuffer);
+        game_sound_output_buffer soundBuffer = {};
+        soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
+        soundBuffer.sampleCount = framesWanted;
+        soundBuffer.samples = samples;
+        if (game.getSoundSamples) {
+          game.getSoundSamples(&thread, &gameMemory, &soundBuffer);
         }
 
-        snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
-        snd_pcm_sframes_t framesWanted = 0;
-        if (avail >= 0) {
-          snd_pcm_sframes_t delay;
-          snd_pcm_delay(audioHandler, &delay);
+        linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
+        if (!isSoundPlaying) {
+          int err = snd_pcm_start(audioHandler);
+          if (!err) {
+            isSoundPlaying = true;
+          }
+        }
+      }
 #if HANDMADE_INTERNAL
-          printf("delay: %ld avail: %ld\n", delay, avail);
-#endif
-          framesWanted = soundOutput.safetyFrames - delay;
-          if (framesWanted > avail) {
-            framesWanted = avail;
-          }
+      else {
+        int err = snd_pcm_recover(audioHandler, avail, 0);
+        isSoundPlaying = false;
+      }
 
-          game_sound_output_buffer soundBuffer = {};
-          soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
-          soundBuffer.sampleCount = framesWanted;
-          soundBuffer.samples = samples;
-          if (game.getSoundSamples) {
-            game.getSoundSamples(&thread, &gameMemory, &soundBuffer);
-          }
+      // INFO: hack porque cuando cambia de core el tsc no se mantiene,
+      // entonces tengo picos y overflows. Quizas es malisimo lo que hice
+      // de los ifs, no se, no la tengo tan clara.
 
-          linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
-          if (!isSoundPlaying) {
-            int err = snd_pcm_start(audioHandler);
-            if (!err) {
-              isSoundPlaying = true;
-            }
-          }
+      timespec endCounter = linux32GetTimeSpec();
+
+      uint64 nanoSecondsElapsedForWork =
+          linux32GetNanoSecondsElapsed(lastCounter, endCounter);
+
+      uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
+      if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
+        uint64 remainingNs =
+            targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
+        timespec targetSleep = {
+            .tv_sec = (time_t)(remainingNs / NS),
+            .tv_nsec = (int64)(remainingNs % NS),
+        };
+        timespec rem;
+        nanosleep(&targetSleep, &rem);
+
+        timespec testCounter = linux32GetTimeSpec();
+        uint64 testNanoSeconds =
+            linux32GetNanoSecondsElapsed(lastCounter, testCounter);
+        if (testNanoSeconds > targetNanoSecondsPerFrame) {
         }
-#if HANDMADE_INTERNAL
-        else {
-          int err = snd_pcm_recover(audioHandler, avail, 0);
-          isSoundPlaying = false;
-        }
-
-        // INFO: hack porque cuando cambia de core el tsc no se mantiene,
-        // entonces tengo picos y overflows. Quizas es malisimo lo que hice de
-        // los ifs, no se, no la tengo tan clara.
-
-        timespec endCounter = linux32GetTimeSpec();
-
-        uint64 nanoSecondsElapsedForWork =
-            linux32GetNanoSecondsElapsed(lastCounter, endCounter);
-
-        uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
-        if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
-          uint64 remainingNs =
-              targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
-          timespec targetSleep = {
-              .tv_sec = (time_t)(remainingNs / NS),
-              .tv_nsec = (int64)(remainingNs % NS),
-          };
-          timespec rem;
-          nanosleep(&targetSleep, &rem);
-
-          timespec testCounter = linux32GetTimeSpec();
-          uint64 testNanoSeconds =
-              linux32GetNanoSecondsElapsed(lastCounter, testCounter);
-          if (testNanoSeconds > targetNanoSecondsPerFrame) {
-          }
-          while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
-            timespec checkCounter = linux32GetTimeSpec();
-            nanoSecondsElapsedForFrame =
-                linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
-          }
-
-        } else {
+        while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
+          timespec checkCounter = linux32GetTimeSpec();
+          nanoSecondsElapsedForFrame =
+              linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
         }
 
+      } else {
+      }
+
+#if 0
         endCounter = linux32GetTimeSpec();
         real32 msPerFrame =
             (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
             1000000.0f;
+
         real32 FPS = (real32)(1.0f / (real32)(msPerFrame / 1000.0f));
 #endif
+#endif
 
-        linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                      screen->root_depth, gContext);
+      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                    screen->root_depth, gContext);
 
-        game_input *temp = newInput;
-        newInput = oldInput;
-        oldInput = temp;
+      game_input *temp = newInput;
+      newInput = oldInput;
+      oldInput = temp;
 #if HANDMADE_INTERNAL
+#if 0
         char textBuffer[256];
         uint64 endCycleCount = __rdtsc();
         uint64 cyclesElapsed = endCycleCount - lastCycleCount;
@@ -852,17 +902,19 @@ int main() {
                           msPerFrame, FPS, MCPF);
         write(2, textBuffer, len);
 
-        lastCounter = endCounter;
-
         lastCycleCount = endCycleCount;
 #endif
-      }
-    }
-  } else {
-  }
+      lastCounter = endCounter;
 
-  snd_pcm_drop(audioHandler);
-  snd_pcm_close(audioHandler);
-  xcb_disconnect(conn);
-  return (0);
+#endif
+    }
+  }
+}
+else {
+}
+
+snd_pcm_drop(audioHandler);
+snd_pcm_close(audioHandler);
+xcb_disconnect(conn);
+return (0);
 }

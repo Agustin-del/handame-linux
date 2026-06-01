@@ -119,8 +119,8 @@ struct game_controller_input {
 };
 
 struct game_input {
-  game_button_state mouseButtons[2];
-  int32 mouseX, mouseY, mouseZ;
+  game_button_state mouseButtons[3];
+  int32 mouseX, mouseY;
   game_controller_input controllers[5];
 };
 
