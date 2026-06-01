@@ -9,5 +9,5 @@ DEV_COMPILER_FLAGS='-DHANDMADE_SLOW=1 -DHANDMADE_INTERNAL=1
 
 DEV_LINKER_FLAGS="-Wl,--gc-sections"
 
-clang++ $DEV_COMPILER_FLAGS -o build/handmade code/linux32-handmade.cpp $DEV_LINKER_FLAGS -lxcb
+clang++ $DEV_COMPILER_FLAGS -o build/handmade code/linux32-handmade.cpp $DEV_LINKER_FLAGS -lxcb -lxcb-randr
 clang++ $DEV_COMPILER_FLAGS -o build/handmade.so code/handmade.cpp $DEV_LINKER_FLAGS -shared

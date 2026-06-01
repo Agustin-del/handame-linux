@@ -47,7 +47,7 @@ internal void gameOutputSound(game_state *gameState,
   for (int sampleIndex = 0; sampleIndex < soundBuffer->sampleCount;
        ++sampleIndex) {
 
-#if 0
+#if 1
     real32 sineValue = sinf(gameState->tSine);
     int16 sampleValue = (int16)(sineValue * toneVolume);
 #else
@@ -83,11 +83,11 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   if (!memory->isInitialized) {
 #if HANDMADE_INTERNAL
     char *filename = __FILE__;
-    debug_read_file_result file = memory->DEBUGPlatformReadEntireFile(filename);
+    debug_read_file_result file = memory->DEBUGPlatformReadEntireFile(thread, filename);
     if (file.contents) {
-      memory->DEBUGPlatformWriteEntireFile("build/test.out", file.contentsSize,
+      memory->DEBUGPlatformWriteEntireFile(thread, "build/test.out", file.contentsSize,
                                            file.contents);
-      memory->DEBUGPlatformFreeFileMemory(&file);
+      memory->DEBUGPlatformFreeFileMemory(thread, &file);
     }
 #endif
     gameState->blueOffset = 0;
@@ -134,5 +134,7 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   }
 
   renderWeirdGradient(buffer, gameState->blueOffset, gameState->greenOffset);
+
   renderPlayer(buffer, gameState->playerX, gameState->playerY);
+  renderPlayer(buffer, input->mouseX, input->mouseY);
 }

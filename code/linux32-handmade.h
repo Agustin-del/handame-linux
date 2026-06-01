@@ -22,9 +22,16 @@ struct linux32_game_code {
   bool32 isValid;
 };
 
+struct linux32_replay_buffer {
+  int replayFD;
+  void *memoryBlock;
+  char filename[256];
+};
+
 struct linux32_state {
   uint64 totalSize;
   void *gameMemoryBlock;
+  linux32_replay_buffer replayBuffers[4];
 
   int recordingFD;
   int inputRecordingIndex;

@@ -44,6 +44,10 @@ internal uint32 safeTruncateUint64(uint64 value) {
   return result;
 }
 
+struct thread_context {
+  int placeholder;
+};
+
 #if HANDMADE_INTERNAL
 struct debug_read_file_result {
   void *contents;
@@ -51,15 +55,15 @@ struct debug_read_file_result {
 };
 
 #define DEBUG_PLATFORM_READ_ENTIRE_FILE(name)                                  \
-  debug_read_file_result name(char *filename)
+  debug_read_file_result name(thread_context *thread, char *filename)
 typedef DEBUG_PLATFORM_READ_ENTIRE_FILE(debug_platform_read_entire_file);
 
 #define DEBUG_PLATFORM_WRITE_ENTIRE_FILE(name)                                 \
-  bool32 name(char *filename, uint32 memorySize, void *memory)
+  bool32 name(thread_context *thread, char *filename, uint32 memorySize, void *memory)
 typedef DEBUG_PLATFORM_WRITE_ENTIRE_FILE(debug_platform_write_entire_file);
 
 #define DEBUG_PLATFORM_FREE_FILE_MEMORY(name)                                  \
-  void name(debug_read_file_result *file)
+  void name(thread_context *thread, debug_read_file_result *file)
 typedef DEBUG_PLATFORM_FREE_FILE_MEMORY(debug_platform_free_file_memory);
 
 #endif
@@ -115,6 +119,8 @@ struct game_controller_input {
 };
 
 struct game_input {
+  game_button_state mouseButtons[2];
+  int32 mouseX, mouseY, mouseZ;
   game_controller_input controllers[5];
 };
 
@@ -141,13 +147,14 @@ struct game_memory {
   debug_platform_free_file_memory *DEBUGPlatformFreeFileMemory;
 };
 
+
 #define GAME_UPDATE_AND_RENDER(name)                                           \
-  void name(game_memory *memory, game_input *input,                            \
+  void name(thread_context *thread, game_memory *memory, game_input *input,                            \
             game_offscreen_buffer *buffer)
 typedef GAME_UPDATE_AND_RENDER(game_update_and_render);
 
 #define GAME_GET_SOUND_SAMPLES(name)                                           \
-  void name(game_memory *memory, game_sound_output_buffer *soundBuffer)
+  void name(thread_context *thread, game_memory *memory, game_sound_output_buffer *soundBuffer)
 typedef GAME_GET_SOUND_SAMPLES(game_get_sound_samples);
 
 struct game_state {

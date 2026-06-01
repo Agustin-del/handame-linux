@@ -14,6 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <xcb/present.h>
+#include <xcb/randr.h>
 #include <xcb/xcb.h>
 #include <xcb/xproto.h>
 
@@ -248,7 +249,7 @@ DEBUG_PLATFORM_READ_ENTIRE_FILE(DEBUGPlatformReadEntireFile) {
         if ((uint32)rCount == fileSize32) {
           result.contentsSize = fileSize32;
         } else {
-          DEBUGPlatformFreeFileMemory(&result);
+          DEBUGPlatformFreeFileMemory(thread, &result);
           result.contents = 0;
         }
       } else {
@@ -340,18 +341,30 @@ internal void linux32ProcessKey(game_button_state *newState, bool32 isDown) {
   }
 }
 
+internal linux32_replay_buffer *getReplayBuffer(linux32_state *linux32State,
+                                                uint32 index) {
+  assert(index < arrayCount(linux32State->replayBuffers));
+  linux32_replay_buffer *result = &linux32State->replayBuffers[index];
+  return result;
+}
+
 internal void linux32BeginRecordingInput(linux32_state *linux32State,
                                          int inputRecordingIndex) {
-  linux32State->inputRecordingIndex = inputRecordingIndex;
-  char *filename = "build/foo.hmi";
-  linux32State->recordingFD = creat(filename, 0644);
-  uint32 bytesToRead = linux32State->totalSize;
-  assert(linux32State->totalSize == bytesToRead);
-  write(linux32State->recordingFD, linux32State->gameMemoryBlock, bytesToRead);
+
+  linux32_replay_buffer *replayBuffer =
+      getReplayBuffer(linux32State, inputRecordingIndex);
+  if (replayBuffer->memoryBlock) {
+    linux32State->inputRecordingIndex = inputRecordingIndex;
+    linux32State->recordingFD = replayBuffer->replayFD;
+    uint64 bytesToWrite = linux32State->totalSize;
+    assert(linux32State->totalSize == bytesToWrite);
+    memcpy(replayBuffer->memoryBlock, linux32State->gameMemoryBlock,
+           bytesToWrite);
+    lseek(linux32State->recordingFD, bytesToWrite, SEEK_SET);
+  }
 }
 
 internal void linux32EndRecordingInput(linux32_state *linux32State) {
-  close(linux32State->recordingFD);
   linux32State->inputRecordingIndex = 0;
 }
 
@@ -360,19 +373,23 @@ internal void linux32RecordInput(linux32_state *linux32State,
   write(linux32State->recordingFD, newInput, sizeof(*newInput));
 }
 
-// Se podria hacer con un solo fd creo. Y abrirlo con permisos read/write.
 internal void linux32BeginInputPlayback(linux32_state *linux32State,
                                         int inputPlayingIndex) {
-  linux32State->inputPlayingIndex = inputPlayingIndex;
-  char *filename = "build/foo.hmi";
-  linux32State->playbackFD = open(filename, O_RDONLY);
-  uint32 bytesToWrite = linux32State->totalSize;
-  assert(linux32State->totalSize == bytesToWrite);
-  read(linux32State->playbackFD, linux32State->gameMemoryBlock, bytesToWrite);
+  linux32_replay_buffer *replayBuffer =
+      getReplayBuffer(linux32State, inputPlayingIndex);
+  if (replayBuffer->memoryBlock) {
+    linux32State->inputPlayingIndex = inputPlayingIndex;
+    lseek(replayBuffer->replayFD, 0, SEEK_SET);
+    linux32State->playbackFD = replayBuffer->replayFD;
+    uint32 bytesToRead = linux32State->totalSize;
+    assert(linux32State->totalSize == bytesToRead);
+    memcpy(linux32State->gameMemoryBlock, replayBuffer->memoryBlock,
+           bytesToRead);
+    lseek(linux32State->playbackFD, linux32State->totalSize, SEEK_SET);
+  }
 }
 
 internal void linux32EndPlaybackInput(linux32_state *linux32State) {
-  close(linux32State->playbackFD);
   linux32State->inputPlayingIndex = 0;
 }
 
@@ -492,6 +509,7 @@ int main() {
 
   */
 
+  linux32_state linux32State = {};
   xcb_connection_t *conn = xcb_connect(0, 0);
   if (xcb_connection_has_error(conn)) {
     return 1;
@@ -507,7 +525,7 @@ int main() {
 
   xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0,
                     screen->width_in_pixels, screen->height_in_pixels, 10,
-                    XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
+                    XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT,
                     XCB_CW_EVENT_MASK, &events);
 
   /*
@@ -540,24 +558,32 @@ int main() {
   xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND,
                 &screen->black_pixel);
 
+  int monitorRefreshHz = 60;
+
+  xcb_randr_get_screen_info_cookie_t infoCookie =
+      xcb_randr_get_screen_info(conn, window);
+
+  xcb_generic_error_t *infoError;
+  xcb_randr_get_screen_info_reply_t *infoReply =
+      xcb_randr_get_screen_info_reply(conn, infoCookie, &infoError);
+  int xMonitorRefreshRate = infoReply->rate;
+  free(infoReply);
+
+  if (!infoError) {
+    monitorRefreshHz = xMonitorRefreshRate;
+  }
   xcb_map_window(conn, window);
 
-  int monitorRefreshHz = 60;
-  int gameUpdateHz = monitorRefreshHz / 2;
+
+  real32 gameUpdateHz = (real32)monitorRefreshHz / 2.0f;
   uint64 targetNanoSecondsPerFrame = NS / gameUpdateHz;
 
   real32 targetSecondsPerFrame = 1.0f / gameUpdateHz;
 
   soundOutput.framesPerSecond = 48000;
   soundOutput.bytesPerFrame = sizeof(int16) * 2;
-  soundOutput.safetyFrames = ((soundOutput.framesPerSecond * 2) / gameUpdateHz);
-
-  // soundOutput.latencyFramesCount = soundOutput.framesPerSecond /
-  // gameUpdateHz;
-  /*
-soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
-                                     ((real32)gameUpdateHz * 2 / 3));
-                                     */
+  soundOutput.safetyFrames =
+      (int)(((real32)soundOutput.framesPerSecond * 2.0f) / gameUpdateHz);
 
   snd_pcm_t *audioHandler = linux32InitSound(soundOutput.framesPerSecond);
 
@@ -565,7 +591,6 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
   // loguear o fijarse de no usarlo, porque no cargo, es decir
   // no tengo las funciones disponibles globalmente
 
-  linux32_state linux32State = {};
   globalRunning = true;
   int16 *samples =
       (int16 *)mmap(0, soundOutput.framesPerSecond * soundOutput.bytesPerFrame,
@@ -604,6 +629,28 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
   gameMemory.transientStorage =
       ((uint8 *)gameMemory.permanentStorage + gameMemory.permanentStorageSize);
 
+  for (int replayIndex = 0;
+       replayIndex < (int)arrayCount(linux32State.replayBuffers);
+       ++replayIndex) {
+
+    linux32_replay_buffer *replayBuffer =
+        &linux32State.replayBuffers[replayIndex];
+
+    snprintf(replayBuffer->filename, sizeof(replayBuffer->filename),
+             "build/loop-edit%d.hmi", replayIndex);
+    replayBuffer->replayFD =
+        open(replayBuffer->filename, O_CREAT | O_RDWR | O_TRUNC, 0644);
+    ftruncate(replayBuffer->replayFD, linux32State.totalSize);
+    replayBuffer->memoryBlock =
+        mmap(0, linux32State.totalSize, PROT_READ | PROT_WRITE, MAP_SHARED,
+             replayBuffer->replayFD, 0);
+
+    if (replayBuffer->memoryBlock) {
+
+    } else {
+    }
+  }
+
   bool32 isSoundPlaying = false;
 
   if (samples && gameMemory.permanentStorage && gameMemory.transientStorage) {
@@ -622,6 +669,9 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         game = linux32LoadGameCode(sourceSOName, tempSOName);
         game.SOLastWriteTime = newWriteSO;
       }
+
+      newInput->mouseX = 50;
+      newInput->mouseY = 50;
 
       game_controller_input *oldKeyboardController = getController(oldInput, 0);
       game_controller_input *newKeyboardController = getController(newInput, 0);
@@ -677,6 +727,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
       }
 
       if (!globalPause) {
+        thread_context thread = {};
         // Creo que podria usar el mismo buffer en vez de crear espacio
         // va no estoy alocando nada nuevo, pero tampoco tengo nada distinto
         // entre el buffer de plataforma y el del juego.
@@ -698,7 +749,7 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
         }
 
         if (game.updateAndRender) {
-          game.updateAndRender(&gameMemory, newInput,
+          game.updateAndRender(&thread, &gameMemory, newInput,
                                (game_offscreen_buffer *)&globalBackbuffer);
         }
 
@@ -719,8 +770,8 @@ soundOutput.latencyFramesCount = (int)((real32)soundOutput.framesPerSecond /
           soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
           soundBuffer.sampleCount = framesWanted;
           soundBuffer.samples = samples;
-          if(game.getSoundSamples) {
-            game.getSoundSamples(&gameMemory, &soundBuffer);
+          if (game.getSoundSamples) {
+            game.getSoundSamples(&thread, &gameMemory, &soundBuffer);
           }
 
           linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
