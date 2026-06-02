@@ -101,7 +101,7 @@ internal linux32_game_code linux32LoadGameCode(char *sourceSOName,
 
   int SOFD = open(sourceSOName, O_RDONLY);
   int tempSO = creat(tempSOName, 0755);
-  int ret = ioctl(tempSO, FICLONE, SOFD);
+  ioctl(tempSO, FICLONE, SOFD);
 
   result.gameCodeSO = dlopen(tempSOName, RTLD_NOW);
   if (result.gameCodeSO) {
@@ -355,8 +355,10 @@ internal void linux32BeginRecordingInput(linux32_state *linux32State,
       getReplayBuffer(linux32State, inputRecordingIndex);
   if (replayBuffer->memoryBlock) {
     linux32State->inputRecordingIndex = inputRecordingIndex;
+    char inputName[256];
+    snprintf(inputName, sizeof(inputName), "build/input%d.hmi", inputRecordingIndex);
     linux32State->recordingFD =
-        open("build/input.hmi", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        open(inputName, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     uint64 bytesToWrite = linux32State->totalSize;
     assert(linux32State->totalSize == bytesToWrite);
     memcpy(replayBuffer->memoryBlock, linux32State->gameMemoryBlock,
@@ -369,7 +371,7 @@ internal void linux32EndRecordingInput(linux32_state *linux32State) {
   linux32State->inputRecordingIndex = 0;
 }
 
-internal void linux32RecordInput(linux32_state *linux32State,
+internal void linux32RecordingInput(linux32_state *linux32State,
                                  game_input *newInput) {
   write(linux32State->recordingFD, newInput, sizeof(*newInput));
 }
@@ -380,7 +382,9 @@ internal void linux32BeginInputPlayback(linux32_state *linux32State,
       getReplayBuffer(linux32State, inputPlayingIndex);
   if (replayBuffer->memoryBlock) {
     linux32State->inputPlayingIndex = inputPlayingIndex;
-    linux32State->playbackFD = open("build/input.hmi", O_RDONLY);
+    char inputName[256];
+    snprintf(inputName, sizeof(inputName), "build/input%d.hmi", inputPlayingIndex);
+    linux32State->playbackFD = open(inputName, O_RDONLY);
     uint32 bytesToRead = linux32State->totalSize;
     assert(linux32State->totalSize == bytesToRead);
     memcpy(linux32State->gameMemoryBlock, replayBuffer->memoryBlock,
@@ -406,7 +410,7 @@ internal void linux32PlaybackInput(linux32_state *linux32State,
   }
 }
 
-internal void
+inline void
 linux32ProcessKeyboardMessage(linux32_state *linux32State,
                               xcb_key_press_event_t *event,
                               game_controller_input *keyboardController) {
@@ -520,7 +524,7 @@ int main() {
     return 1;
   }
 
-  linux32XResizeBackBuffer(&globalBackbuffer, 1280, 720);
+  linux32XResizeBackBuffer(&globalBackbuffer, 960, 440);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
 
@@ -533,7 +537,7 @@ int main() {
                          XCB_EVENT_MASK_STRUCTURE_NOTIFY |
                          XCB_EVENT_MASK_FOCUS_CHANGE);
   xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0,
-                    screen->width_in_pixels, screen->height_in_pixels, 10,
+                    960, 440, 10,
                     XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT,
                     XCB_CW_EVENT_MASK, &events);
   /*
@@ -566,16 +570,6 @@ int main() {
   xcb_create_gc(conn, gContext, window, XCB_GC_FOREGROUND,
                 &screen->black_pixel);
 
-  xcb_pixmap_t pixmap = xcb_generate_id(conn);
-  xcb_create_pixmap(conn, 1, pixmap, window, 1, 1);
-  xcb_gcontext_t gc = xcb_generate_id(conn);
-  xcb_create_gc(conn, gc, pixmap, 0, NULL);
-  xcb_cursor_t blankCursor = xcb_generate_id(conn);
-  xcb_create_cursor(conn, blankCursor, pixmap, pixmap, 0, 0, 0, 0, 0, 0, 1, 1);
-  xcb_change_window_attributes(conn, window, XCB_CW_CURSOR, &blankCursor);
-  xcb_free_cursor(conn, blankCursor);
-  xcb_free_pixmap(conn, pixmap);
-  xcb_free_gc(conn, gc);
   int monitorRefreshHz = 60;
 
   xcb_randr_get_screen_info_cookie_t infoCookie =
@@ -610,7 +604,7 @@ int main() {
 
   globalRunning = true;
   int16 *samples =
-      (int16 *)mmap(0, soundOutput.framesPerSecond * soundOutput.bytesPerFrame,
+      (int16 *)mmap(0, soundOutput.safetyFrames * soundOutput.bytesPerFrame,
                     PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   assert(samples != MAP_FAILED);
@@ -618,7 +612,10 @@ int main() {
 #if HANDMADE_INTERNAL
   timespec lastCounter = linux32GetTimeSpec();
 
+#if 0
   uint64 lastCycleCount = __rdtsc();
+
+#endif
 
   void *baseAddress = (void *)terabytes(2);
 #else
@@ -657,7 +654,8 @@ int main() {
              "build/loop-edit%d.hmi", replayIndex);
     replayBuffer->replayFD =
         open(replayBuffer->filename, O_CREAT | O_RDWR | O_TRUNC, 0644);
-    ftruncate(replayBuffer->replayFD, linux32State.totalSize);
+    //ftruncate(replayBuffer->replayFD, linux32State.totalSize);
+    fallocate(replayBuffer->replayFD, 0, 0, linux32State.totalSize);
     replayBuffer->memoryBlock =
         mmap(0, linux32State.totalSize, PROT_READ | PROT_WRITE, MAP_SHARED,
              replayBuffer->replayFD, 0);
@@ -674,6 +672,7 @@ int main() {
     game_input input[2] = {};
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
+    newInput->secondsToAdvanceOverUpdate = targetSecondsPerFrame; 
 
     char *sourceSOName = "build/handmade.so";
     char *tempSOName = "build/handmade-tmp.so";
@@ -788,7 +787,7 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
       */
 
       if (linux32State.inputRecordingIndex) {
-        linux32RecordInput(&linux32State, newInput);
+        linux32RecordingInput(&linux32State, newInput);
       }
       if (linux32State.inputPlayingIndex) {
 
@@ -852,11 +851,13 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
         timespec rem;
         nanosleep(&targetSleep, &rem);
 
+#if 0
         timespec testCounter = linux32GetTimeSpec();
         uint64 testNanoSeconds =
             linux32GetNanoSecondsElapsed(lastCounter, testCounter);
         if (testNanoSeconds > targetNanoSecondsPerFrame) {
         }
+#endif
         while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
           timespec checkCounter = linux32GetTimeSpec();
           nanoSecondsElapsedForFrame =
@@ -903,14 +904,13 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
         write(2, textBuffer, len);
 
         lastCycleCount = endCycleCount;
+
 #endif
       lastCounter = endCounter;
-
 #endif
     }
   }
-}
-else {
+} else {
 }
 
 snd_pcm_drop(audioHandler);

@@ -1,39 +1,44 @@
 #include "handmade.h"
 
-internal void renderWeirdGradient(game_offscreen_buffer *buffer, int xOffset,
-                                  int yOffset) {
-  uint8 *row = (uint8 *)buffer->memory;
-  for (int y = 0; y < buffer->height; ++y) {
-    uint32 *pixel = (uint32 *)row;
-    for (int x = 0; x < buffer->width; ++x) {
-      uint8 blue = (uint8)(x + xOffset);
-      uint8 green = (uint8)(y + yOffset);
-      *pixel++ = (green << 8) | blue;
-    }
-    row += buffer->pitch;
-  }
+internal int32 roundReal32ToInt32(real32 real32) {
+  int32 result = (int32)(real32 + 0.5f);
+  return result;
 }
+internal void drawRectangle(game_offscreen_buffer *buffer, real32 realMinX,
+                            real32 realMinY, real32 realMaxX, real32 realMaxY,
+                            uint32 color) {
 
-internal void renderPlayer(game_offscreen_buffer *buffer, int playerX,
-                           int playerY) {
+  int32 minX = roundReal32ToInt32(realMinX);
+  int32 minY = roundReal32ToInt32(realMinY);
+  int32 maxX = roundReal32ToInt32(realMaxX);
+  int32 maxY = roundReal32ToInt32(realMaxY);
+
+  if (minX < 0) {
+    minX = 0;
+  }
+  if (minY < 0) {
+    minY = 0;
+  }
+
+  if (maxX > buffer->width) {
+    maxX = buffer->width;
+  }
+
+  if (maxY > buffer->height) {
+    maxY = buffer->height;
+  }
 
   uint8 *endOfBuffer =
       (uint8 *)buffer->memory + (buffer->pitch * buffer->height);
 
-  uint32 color = 0x00000000;
-  int top = playerY;
-  int bottom = playerY + 50;
-  int left = playerX;
-  int right = playerX + 50;
-  for (int y = top; y < bottom; ++y) {
-    uint32 *pixel =
-        (uint32 *)((uint8 *)buffer->memory + left * buffer->bytesPerPixel +
-                   y * buffer->pitch);
-    for (int x = left; x < right; ++x) {
-      if ((uint8 *)pixel < endOfBuffer && (uint8 *)pixel >= buffer->memory) {
-        *pixel++ = color;
-      }
+  uint8 *row = (uint8 *)buffer->memory + (buffer->pitch * minY) +
+               buffer->bytesPerPixel * minX;
+  for (int y = minY; y < maxY; ++y) {
+    uint32 *pixel = (uint32 *)row;
+    for (int x = minX; x < maxX; ++x) {
+      *pixel++ = color;
     }
+    row += buffer->pitch;
   }
 }
 
@@ -41,13 +46,12 @@ internal void gameOutputSound(game_state *gameState,
                               game_sound_output_buffer *soundBuffer) {
 
   int16 toneVolume = 4000;
-  int wavePeriod = soundBuffer->samplesPerSecond / (gameState->toneHz);
   int16 *sampleOut = soundBuffer->samples;
 
   for (int sampleIndex = 0; sampleIndex < soundBuffer->sampleCount;
        ++sampleIndex) {
 
-#if 1
+#if 0
     real32 sineValue = sinf(gameState->tSine);
     int16 sampleValue = (int16)(sineValue * toneVolume);
 #else
@@ -56,11 +60,13 @@ internal void gameOutputSound(game_state *gameState,
 
     *sampleOut++ = sampleValue;
     *sampleOut++ = sampleValue;
+#if 0
 
     gameState->tSine += 2.0f * PI32 / (real32)wavePeriod;
     if (gameState->tSine > 2.0f * PI32) {
       gameState->tSine -= 2.0f * PI32;
     }
+#endif
   }
 }
 
@@ -81,69 +87,33 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   game_state *gameState = (game_state *)memory->permanentStorage;
 
   if (!memory->isInitialized) {
-#if HANDMADE_INTERNAL
-    char *filename = __FILE__;
-    debug_read_file_result file =
-        memory->DEBUGPlatformReadEntireFile(thread, filename);
-    if (file.contents) {
-      memory->DEBUGPlatformWriteEntireFile(thread, "build/test.out",
-                                           file.contentsSize, file.contents);
-      memory->DEBUGPlatformFreeFileMemory(thread, &file);
-    }
-#endif
-    gameState->blueOffset = 0;
-    gameState->greenOffset = 0;
-    gameState->toneHz = 256;
-    gameState->tSine = 0.0f;
-    gameState->playerX = 100;
-    gameState->playerY = 100;
     memory->isInitialized = true;
   }
+
   for (int controllerIdx = 0;
        controllerIdx < (int)arrayCount(input->controllers); ++controllerIdx) {
     game_controller_input *controller = getController(input, controllerIdx);
     if (controller->isAnalog) {
-      if (controller->moveRight.endedDown) {
-        gameState->blueOffset += 4;
-      }
+    } else {
     }
-
-    if (controller->moveRight.endedDown) {
-      gameState->playerX += 4;
-      gameState->blueOffset += 1;
-    }
-    if (controller->moveLeft.endedDown) {
-      gameState->playerX -= 4;
-    }
-
-    if (controller->moveDown.endedDown) {
-      gameState->playerY += 4;
-    }
-    if (controller->moveUp.endedDown) {
-      gameState->playerY -= 4;
-    }
-
-    if (gameState->tJump > 0) {
-      gameState->playerY += (int)(5.0f * sinf(0.5f * PI32 * gameState->tJump));
-    }
-
-    if (controller->actionUp.endedDown) {
-      gameState->tJump = 4.0f;
-    }
-
-    gameState->tJump -= 0.025f;
   }
 
-  renderWeirdGradient(buffer, gameState->blueOffset, gameState->greenOffset);
+  drawRectangle(buffer, 0.0f, 0.0f, buffer->width, buffer->height, 0x00FF00FF);
+  drawRectangle(buffer, 10.0f, 10.0f, 40.0f, 40.0f, 0x0000FFFF);
+}
 
-  renderPlayer(buffer, gameState->playerX, gameState->playerY);
-
-  renderPlayer(buffer, input->mouseX, input->mouseY);
-  for (int buttonIndex = 0; buttonIndex < (int)arrayCount(input->mouseButtons);
-       ++buttonIndex) {
-    if (input->mouseButtons[buttonIndex].endedDown) {
-
-      renderPlayer(buffer, (10 + 20 * buttonIndex), 10);
+/*
+internal void renderWeirdGradient(game_offscreen_buffer *buffer, int xOffset,
+                                  int yOffset) {
+  uint8 *row = (uint8 *)buffer->memory;
+  for (int y = 0; y < buffer->height; ++y) {
+    uint32 *pixel = (uint32 *)row;
+    for (int x = 0; x < buffer->width; ++x) {
+      uint8 blue = (uint8)(x + xOffset);
+      uint8 green = (uint8)(y + yOffset);
+      *pixel++ = (green << 8) | blue;
     }
+    row += buffer->pitch;
   }
 }
+*/
