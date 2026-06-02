@@ -356,7 +356,8 @@ internal void linux32BeginRecordingInput(linux32_state *linux32State,
   if (replayBuffer->memoryBlock) {
     linux32State->inputRecordingIndex = inputRecordingIndex;
     char inputName[256];
-    snprintf(inputName, sizeof(inputName), "build/input%d.hmi", inputRecordingIndex);
+    snprintf(inputName, sizeof(inputName), "build/input%d.hmi",
+             inputRecordingIndex);
     linux32State->recordingFD =
         open(inputName, O_CREAT | O_WRONLY | O_TRUNC, 0644);
     uint64 bytesToWrite = linux32State->totalSize;
@@ -372,7 +373,7 @@ internal void linux32EndRecordingInput(linux32_state *linux32State) {
 }
 
 internal void linux32RecordingInput(linux32_state *linux32State,
-                                 game_input *newInput) {
+                                    game_input *newInput) {
   write(linux32State->recordingFD, newInput, sizeof(*newInput));
 }
 
@@ -383,7 +384,8 @@ internal void linux32BeginInputPlayback(linux32_state *linux32State,
   if (replayBuffer->memoryBlock) {
     linux32State->inputPlayingIndex = inputPlayingIndex;
     char inputName[256];
-    snprintf(inputName, sizeof(inputName), "build/input%d.hmi", inputPlayingIndex);
+    snprintf(inputName, sizeof(inputName), "build/input%d.hmi",
+             inputPlayingIndex);
     linux32State->playbackFD = open(inputName, O_RDONLY);
     uint32 bytesToRead = linux32State->totalSize;
     assert(linux32State->totalSize == bytesToRead);
@@ -536,10 +538,9 @@ int main() {
                          XCB_EVENT_MASK_EXPOSURE |
                          XCB_EVENT_MASK_STRUCTURE_NOTIFY |
                          XCB_EVENT_MASK_FOCUS_CHANGE);
-  xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0,
-                    960, 440, 10,
-                    XCB_WINDOW_CLASS_INPUT_OUTPUT, XCB_COPY_FROM_PARENT,
-                    XCB_CW_EVENT_MASK, &events);
+  xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0, 960,
+                    440, 10, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                    XCB_COPY_FROM_PARENT, XCB_CW_EVENT_MASK, &events);
   /*
    * INFO: esto si realmente algun dia quisiese hacerlo en serio tendria que
    * entender un poco mas aunque ahora me lo pone fullscreen, a mi me suena
@@ -654,7 +655,7 @@ int main() {
              "build/loop-edit%d.hmi", replayIndex);
     replayBuffer->replayFD =
         open(replayBuffer->filename, O_CREAT | O_RDWR | O_TRUNC, 0644);
-    //ftruncate(replayBuffer->replayFD, linux32State.totalSize);
+    // ftruncate(replayBuffer->replayFD, linux32State.totalSize);
     fallocate(replayBuffer->replayFD, 0, 0, linux32State.totalSize);
     replayBuffer->memoryBlock =
         mmap(0, linux32State.totalSize, PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -672,12 +673,12 @@ int main() {
     game_input input[2] = {};
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
-    newInput->dtForFrame = targetSecondsPerFrame; 
 
     char *sourceSOName = "build/handmade.so";
     char *tempSOName = "build/handmade-tmp.so";
     linux32_game_code game = linux32LoadGameCode(sourceSOName, tempSOName);
     while (globalRunning) {
+      newInput->dtForFrame = targetSecondsPerFrame;
       timespec newWriteSO = linux32GetLastWriteTime(sourceSOName);
       if (newWriteSO.tv_sec != game.SOLastWriteTime.tv_sec ||
           newWriteSO.tv_nsec != game.SOLastWriteTime.tv_nsec) {
@@ -745,127 +746,126 @@ int main() {
           if (pe->detail == 3) {
             linux32ProcessKey(&newInput->mouseButtons[2], isDown);
           }
-        }
-        break;
-      case XCB_FOCUS_IN: {
+        } break;
+        case XCB_FOCUS_IN: {
 
-      } break;
-      case XCB_FOCUS_OUT: {
-      } break;
-      case XCB_EXPOSE: {
+        } break;
+        case XCB_FOCUS_OUT: {
+        } break;
+        case XCB_EXPOSE: {
+          /*
+  xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
+  if (ee->count == 0) {
+  linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
+                         screen->root_depth, gContext);
+  }
+  */
+        } break;
+        case XCB_CONFIGURE_NOTIFY: {
+        } break;
+
+        default: {
+
+        } break;
+        }
+        free(event);
+      }
+
+      if (!globalPause) {
+        thread_context thread = {};
+
+        // Creo que podria usar el mismo buffer en vez de crear espacio
+        // va no estoy alocando nada nuevo, pero tampoco tengo nada distinto
+        // entre el buffer de plataforma y el del juego.
         /*
-xcb_expose_event_t *ee = (xcb_expose_event_t *)event;
-if (ee->count == 0) {
-linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
-                       screen->root_depth, gContext);
-}
-*/
-      } break;
-      case XCB_CONFIGURE_NOTIFY: {
-      } break;
+        game_offscreen_buffer buffer = {};
+        buffer.memory = globalBackbuffer.memory;
+        buffer.width = globalBackbuffer.width;
+        buffer.height = globalBackbuffer.height;
+        buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
+        buffer.pitch = globalBackbuffer.pitch;
+        */
 
-      default: {
+        if (linux32State.inputRecordingIndex) {
+          linux32RecordingInput(&linux32State, newInput);
+        }
+        if (linux32State.inputPlayingIndex) {
 
-      } break;
-      }
-      free(event);
-    }
-
-    if (!globalPause) {
-      thread_context thread = {};
-
-      // Creo que podria usar el mismo buffer en vez de crear espacio
-      // va no estoy alocando nada nuevo, pero tampoco tengo nada distinto
-      // entre el buffer de plataforma y el del juego.
-      /*
-      game_offscreen_buffer buffer = {};
-      buffer.memory = globalBackbuffer.memory;
-      buffer.width = globalBackbuffer.width;
-      buffer.height = globalBackbuffer.height;
-      buffer.bytesPerPixel = globalBackbuffer.bytesPerPixel;
-      buffer.pitch = globalBackbuffer.pitch;
-      */
-
-      if (linux32State.inputRecordingIndex) {
-        linux32RecordingInput(&linux32State, newInput);
-      }
-      if (linux32State.inputPlayingIndex) {
-
-        linux32PlaybackInput(&linux32State, newInput);
-      }
-
-      if (game.updateAndRender) {
-        game.updateAndRender(&thread, &gameMemory, newInput,
-                             (game_offscreen_buffer *)&globalBackbuffer);
-      }
-
-      snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
-      snd_pcm_sframes_t framesWanted = 0;
-      if (avail >= 0) {
-        snd_pcm_sframes_t delay;
-        snd_pcm_delay(audioHandler, &delay);
-        framesWanted = soundOutput.safetyFrames - delay;
-        if (framesWanted > avail) {
-          framesWanted = avail;
+          linux32PlaybackInput(&linux32State, newInput);
         }
 
-        game_sound_output_buffer soundBuffer = {};
-        soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
-        soundBuffer.sampleCount = framesWanted;
-        soundBuffer.samples = samples;
-        if (game.getSoundSamples) {
-          game.getSoundSamples(&thread, &gameMemory, &soundBuffer);
+        if (game.updateAndRender) {
+          game.updateAndRender(&thread, &gameMemory, newInput,
+                               (game_offscreen_buffer *)&globalBackbuffer);
         }
 
-        linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
-        if (!isSoundPlaying) {
-          int err = snd_pcm_start(audioHandler);
-          if (!err) {
-            isSoundPlaying = true;
+        snd_pcm_sframes_t avail = snd_pcm_avail_update(audioHandler);
+        snd_pcm_sframes_t framesWanted = 0;
+        if (avail >= 0) {
+          snd_pcm_sframes_t delay;
+          snd_pcm_delay(audioHandler, &delay);
+          framesWanted = soundOutput.safetyFrames - delay;
+          if (framesWanted > avail) {
+            framesWanted = avail;
+          }
+
+          game_sound_output_buffer soundBuffer = {};
+          soundBuffer.samplesPerSecond = soundOutput.framesPerSecond;
+          soundBuffer.sampleCount = framesWanted;
+          soundBuffer.samples = samples;
+          if (game.getSoundSamples) {
+            game.getSoundSamples(&thread, &gameMemory, &soundBuffer);
+          }
+
+          linux32FillSoundBuffer(audioHandler, framesWanted, &soundBuffer);
+          if (!isSoundPlaying) {
+            int err = snd_pcm_start(audioHandler);
+            if (!err) {
+              isSoundPlaying = true;
+            }
           }
         }
-      }
 #if HANDMADE_INTERNAL
-      else {
-        int err = snd_pcm_recover(audioHandler, avail, 0);
-        isSoundPlaying = false;
-      }
+        else {
+          int err = snd_pcm_recover(audioHandler, avail, 0);
+          isSoundPlaying = false;
+        }
 
-      // INFO: hack porque cuando cambia de core el tsc no se mantiene,
-      // entonces tengo picos y overflows. Quizas es malisimo lo que hice
-      // de los ifs, no se, no la tengo tan clara.
+        // INFO: hack porque cuando cambia de core el tsc no se mantiene,
+        // entonces tengo picos y overflows. Quizas es malisimo lo que hice
+        // de los ifs, no se, no la tengo tan clara.
 
-      timespec endCounter = linux32GetTimeSpec();
+        timespec endCounter = linux32GetTimeSpec();
 
-      uint64 nanoSecondsElapsedForWork =
-          linux32GetNanoSecondsElapsed(lastCounter, endCounter);
+        uint64 nanoSecondsElapsedForWork =
+            linux32GetNanoSecondsElapsed(lastCounter, endCounter);
 
-      uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
-      if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
-        uint64 remainingNs =
-            targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
-        timespec targetSleep = {
-            .tv_sec = (time_t)(remainingNs / NS),
-            .tv_nsec = (int64)(remainingNs % NS),
-        };
-        timespec rem;
-        nanosleep(&targetSleep, &rem);
+        uint64 nanoSecondsElapsedForFrame = nanoSecondsElapsedForWork;
+        if (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
+          uint64 remainingNs =
+              targetNanoSecondsPerFrame - nanoSecondsElapsedForFrame;
+          timespec targetSleep = {
+              .tv_sec = (time_t)(remainingNs / NS),
+              .tv_nsec = (int64)(remainingNs % NS),
+          };
+          timespec rem;
+          nanosleep(&targetSleep, &rem);
 
 #if 1
-        timespec testCounter = linux32GetTimeSpec();
-        uint64 testNanoSeconds =
-            linux32GetNanoSecondsElapsed(lastCounter, testCounter);
-        if (testNanoSeconds > targetNanoSecondsPerFrame) {
-        }
+          timespec testCounter = linux32GetTimeSpec();
+          uint64 testNanoSeconds =
+              linux32GetNanoSecondsElapsed(lastCounter, testCounter);
+          if (testNanoSeconds > targetNanoSecondsPerFrame) {
+          }
 #endif
-        while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
-          timespec checkCounter = linux32GetTimeSpec();
-          nanoSecondsElapsedForFrame =
-              linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
-        }
+          while (nanoSecondsElapsedForFrame < targetNanoSecondsPerFrame) {
+            timespec checkCounter = linux32GetTimeSpec();
+            nanoSecondsElapsedForFrame =
+                linux32GetNanoSecondsElapsed(lastCounter, checkCounter);
+          }
 
-      } else {
-      }
+        } else {
+        }
 
 #if 1
         endCounter = linux32GetTimeSpec();
@@ -877,12 +877,12 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
 #endif
 #endif
 
-      linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
-                                    screen->root_depth, gContext);
+        linux32XDisplayBufferInWindow(&globalBackbuffer, conn, window,
+                                      screen->root_depth, gContext);
 
-      game_input *temp = newInput;
-      newInput = oldInput;
-      oldInput = temp;
+        game_input *temp = newInput;
+        newInput = oldInput;
+        oldInput = temp;
 #if HANDMADE_INTERNAL
 #if 1
         char textBuffer[256];
@@ -906,15 +906,15 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
         lastCycleCount = endCycleCount;
 
 #endif
-      lastCounter = endCounter;
+        lastCounter = endCounter;
 #endif
+      }
     }
+  } else {
   }
-} else {
-}
 
-snd_pcm_drop(audioHandler);
-snd_pcm_close(audioHandler);
-xcb_disconnect(conn);
-return (0);
+  snd_pcm_drop(audioHandler);
+  snd_pcm_close(audioHandler);
+  xcb_disconnect(conn);
+  return (0);
 }
