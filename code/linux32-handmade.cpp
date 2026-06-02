@@ -612,7 +612,7 @@ int main() {
 #if HANDMADE_INTERNAL
   timespec lastCounter = linux32GetTimeSpec();
 
-#if 0
+#if 1
   uint64 lastCycleCount = __rdtsc();
 
 #endif
@@ -672,7 +672,7 @@ int main() {
     game_input input[2] = {};
     game_input *newInput = &input[0];
     game_input *oldInput = &input[1];
-    newInput->secondsToAdvanceOverUpdate = targetSecondsPerFrame; 
+    newInput->dtForFrame = targetSecondsPerFrame; 
 
     char *sourceSOName = "build/handmade.so";
     char *tempSOName = "build/handmade-tmp.so";
@@ -851,7 +851,7 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
         timespec rem;
         nanosleep(&targetSleep, &rem);
 
-#if 0
+#if 1
         timespec testCounter = linux32GetTimeSpec();
         uint64 testNanoSeconds =
             linux32GetNanoSecondsElapsed(lastCounter, testCounter);
@@ -867,7 +867,7 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
       } else {
       }
 
-#if 0
+#if 1
         endCounter = linux32GetTimeSpec();
         real32 msPerFrame =
             (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
@@ -884,7 +884,7 @@ linux32XDisplayBufferInWindow(&globalBackbuffer, conn, ee->window,
       newInput = oldInput;
       oldInput = temp;
 #if HANDMADE_INTERNAL
-#if 0
+#if 1
         char textBuffer[256];
         uint64 endCycleCount = __rdtsc();
         uint64 cyclesElapsed = endCycleCount - lastCycleCount;
