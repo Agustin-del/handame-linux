@@ -1,4 +1,5 @@
 #include "handmade.h"
+#include <time.h>
 #include "linux32-handmade.h"
 #include <alsa/asoundlib.h>
 #include <dlfcn.h>
@@ -11,7 +12,6 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 #include <xcb/present.h>
 #include <xcb/randr.h>
@@ -325,11 +325,14 @@ internal void linux32XDisplayBufferInWindow(linux32_offscreen_buffer *buffer,
                                             xcb_connection_t *conn,
                                             xcb_window_t window, uint8 depth,
                                             xcb_gcontext_t gContext) {
+
+  int offsetX = 20;
+  int offsetY = 20;
   uint32 bitMapMemorySize =
       buffer->width * buffer->height * buffer->bytesPerPixel;
 
   xcb_put_image(conn, XCB_IMAGE_FORMAT_Z_PIXMAP, window, gContext,
-                buffer->width, buffer->height, 0, 0, 0, depth, bitMapMemorySize,
+                buffer->width, buffer->height, offsetX, offsetY, 0, depth, bitMapMemorySize,
                 (uint8 *)buffer->memory);
   xcb_flush(conn);
 }
@@ -538,8 +541,8 @@ int main() {
                          XCB_EVENT_MASK_EXPOSURE |
                          XCB_EVENT_MASK_STRUCTURE_NOTIFY |
                          XCB_EVENT_MASK_FOCUS_CHANGE);
-  xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0, 960,
-                    440, 10, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+  xcb_create_window(conn, XCB_COPY_FROM_PARENT, window, screen->root, 0, 0, screen->width_in_pixels,
+                    screen->height_in_pixels, 10, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                     XCB_COPY_FROM_PARENT, XCB_CW_EVENT_MASK, &events);
   /*
    * INFO: esto si realmente algun dia quisiese hacerlo en serio tendria que
