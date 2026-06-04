@@ -529,7 +529,7 @@ int main() {
     return 1;
   }
 
-  linux32XResizeBackBuffer(&globalBackbuffer, 960, 440);
+  linux32XResizeBackBuffer(&globalBackbuffer, 960, 540);
   xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
   xcb_window_t window = xcb_generate_id(conn);
 
@@ -616,7 +616,7 @@ int main() {
 #if HANDMADE_INTERNAL
   timespec lastCounter = linux32GetTimeSpec();
 
-#if 1
+#if 0
   uint64 lastCycleCount = __rdtsc();
 
 #endif
@@ -854,7 +854,7 @@ int main() {
           timespec rem;
           nanosleep(&targetSleep, &rem);
 
-#if 1
+#if 0
           timespec testCounter = linux32GetTimeSpec();
           uint64 testNanoSeconds =
               linux32GetNanoSecondsElapsed(lastCounter, testCounter);
@@ -870,7 +870,7 @@ int main() {
         } else {
         }
 
-#if 1
+#if 0
         endCounter = linux32GetTimeSpec();
         real32 msPerFrame =
             (real32)linux32GetNanoSecondsElapsed(lastCounter, endCounter) /
@@ -887,7 +887,7 @@ int main() {
         newInput = oldInput;
         oldInput = temp;
 #if HANDMADE_INTERNAL
-#if 1
+#if 0
         char textBuffer[256];
         uint64 endCycleCount = __rdtsc();
         uint64 cyclesElapsed = endCycleCount - lastCycleCount;
