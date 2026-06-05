@@ -41,22 +41,19 @@ inline game_controller_input *getController(game_input *input,
 }
 
 struct canonical_position{
+#if 1
   int32 tilemapX;
   int32 tilemapY;
 
   int32 tileX;
   int32 tileY;
+#else
+  uint32 tileX;
+  uint32 tileY;
+#endif
 
-  real32 tileRelativeX;
-  real32 tileRelativeY;
-};
-
-struct raw_position{
-  int32 tilemapX;
-  int32 tilemapY;
-
-  real32 x;
-  real32 y;
+  real32 tileRelX;
+  real32 tileRelY;
 };
 
 struct tile_map {
@@ -66,6 +63,10 @@ struct tile_map {
 struct world_map {
   tile_map *tilemaps;
 
+  real32 tileSideInMeters;
+  int32 tileSideInPixels;
+  real32 metersToPixels;
+
   int32 tilemapCountX;
   int32 tilemapCountY;
 
@@ -74,15 +75,10 @@ struct world_map {
 
   real32 upperLeftX;
   real32 upperLeftY;
-  real32 tileWidth;
-  real32 tileHeight;
 };
 
 struct game_state {
-  int32 playerTilemapX;
-  int32 playerTilemapY;
-  real32 playerX;
-  real32 playerY;
+  canonical_position playerP;
 };
 
 #define HANDMADE_H
