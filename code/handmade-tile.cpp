@@ -21,13 +21,16 @@ inline tile_map_position recanonicalizePosition(tile_map *tileMap,
 }
 
 inline tile_chunk *getTileChunk(tile_map *tileMap, uint32 tileChunkX,
-                                uint32 tileChunkY) {
+                                uint32 tileChunkY, uint32 tileChunkZ) {
   tile_chunk *tileChunk = {};
   if ((tileChunkX >= 0) && (tileChunkX < tileMap->tileChunkCountX) &&
-      (tileChunkY >= 0) && (tileChunkY < tileMap->tileChunkCountY)) {
+      (tileChunkY >= 0) && (tileChunkY < tileMap->tileChunkCountY) &&
+      (tileChunkZ >= 0) && (tileChunkZ < tileMap->tileChunkCountZ)) {
     tileChunk =
         &tileMap
-             ->tileChunks[tileMap->tileChunkCountX * tileChunkY + tileChunkX];
+             ->tileChunks[tileMap->tileChunkCountY * tileMap->tileChunkCountX *
+                              tileChunkZ +
+                          tileMap->tileChunkCountX * tileChunkY + tileChunkX];
   }
   return tileChunk;
 }
@@ -41,9 +44,10 @@ inline uint32 getTileValueUnchecked(tile_map *tileMap, tile_chunk *tileChunk,
   uint32 tileChunkValue = tileChunk->tiles[tileMap->chunkDim * tileY + tileX];
   return tileChunkValue;
 }
+
 inline void setTileValueUnchecked(tile_map *tileMap, tile_chunk *tileChunk,
                                   uint32 tileX, uint32 tileY,
-                                  uint32 tileValue){
+                                  uint32 tileValue) {
 
   assert(tileChunk);
   assert(tileX < tileMap->chunkDim);
@@ -51,33 +55,36 @@ inline void setTileValueUnchecked(tile_map *tileMap, tile_chunk *tileChunk,
   tileChunk->tiles[tileMap->chunkDim * tileY + tileX] = tileValue;
 }
 
-
 internal uint32 getTileValue(tile_map *tileMap, tile_chunk *tileChunk,
                              uint32 testTileX, uint32 testTileY) {
 
   uint32 tileChunkValue = 0;
-  if (tileChunk) {
-    tileChunkValue =
-        getTileValueUnchecked(tileMap, tileChunk, testTileX, testTileY);
+  if (tileChunk && tileChunk->tiles) {
+    tileChunkValue = getTileValueUnchecked(tileMap, tileChunk, testTileX,
+                                           testTileY);
   }
 
   return tileChunkValue;
 }
 
-internal void setTileValue(tile_map *tileMap, tile_chunk *tileChunk, uint32 testTileX,
-                           uint32 testTileY, uint32 tileValue) {
+internal void setTileValue(tile_map *tileMap, tile_chunk *tileChunk,
+                           uint32 testTileX, uint32 testTileY,
+                           uint32 tileValue) {
 
-  if (tileChunk) {
-    setTileValueUnchecked(tileMap, tileChunk, testTileX, testTileY, tileValue);
+  if (tileChunk && tileChunk->tiles) {
+    setTileValueUnchecked(tileMap, tileChunk, testTileX, testTileY,
+                          tileValue);
   }
 }
 
-inline tile_chunk_position
-getChunkPositionFor(tile_map *tileMap, uint32 absTileX, uint32 absTileY) {
+inline tile_chunk_position getChunkPositionFor(tile_map *tileMap,
+                                               uint32 absTileX, uint32 absTileY,
+                                               uint32 absTileZ) {
   tile_chunk_position result;
 
   result.tileChunkX = absTileX >> tileMap->chunkShift;
   result.tileChunkY = absTileY >> tileMap->chunkShift;
+  result.tileChunkZ = absTileZ;
   result.relTileX = absTileX & tileMap->chunkMask;
   result.relTileY = absTileY & tileMap->chunkMask;
 
@@ -85,13 +92,13 @@ getChunkPositionFor(tile_map *tileMap, uint32 absTileX, uint32 absTileY) {
 }
 
 internal uint32 getTileValue(tile_map *tileMap, uint32 absTileX,
-                             uint32 absTileY) {
+                             uint32 absTileY, uint32 absTileZ) {
   bool32 empty = false;
 
   tile_chunk_position chunkPos =
-      getChunkPositionFor(tileMap, absTileX, absTileY);
-  tile_chunk *tileChunk =
-      getTileChunk(tileMap, chunkPos.tileChunkX, chunkPos.tileChunkY);
+      getChunkPositionFor(tileMap, absTileX, absTileY, absTileZ);
+  tile_chunk *tileChunk = getTileChunk(
+      tileMap, chunkPos.tileChunkX, chunkPos.tileChunkY, chunkPos.tileChunkZ);
   uint32 tileChunkValue =
       getTileValue(tileMap, tileChunk, chunkPos.relTileX, chunkPos.relTileY);
   return tileChunkValue;
@@ -100,20 +107,28 @@ internal uint32 getTileValue(tile_map *tileMap, uint32 absTileX,
 internal bool32 isTileMapPointEmpty(tile_map *tileMap,
                                     tile_map_position canPos) {
   uint32 tileChunkValue =
-      getTileValue(tileMap, canPos.absTileX, canPos.absTileY);
-  bool32 empty = (tileChunkValue == 0);
+      getTileValue(tileMap, canPos.absTileX, canPos.absTileY, canPos.absTileZ);
+  bool32 empty = (tileChunkValue == 1);
   return empty;
 }
 
 internal void setTileValue(memory_arena *arena, tile_map *tileMap,
-                           uint32 absTileX, uint32 absTileY, uint32 tileValue) {
+                           uint32 absTileX, uint32 absTileY, uint32 absTileZ,
+                           uint32 tileValue) {
   tile_chunk_position chunkPos =
-      getChunkPositionFor(tileMap, absTileX, absTileY);
+      getChunkPositionFor(tileMap, absTileX, absTileY, absTileZ);
 
-  tile_chunk *tileChunk =
-      getTileChunk(tileMap, chunkPos.tileChunkX, chunkPos.tileChunkY);
+  tile_chunk *tileChunk = getTileChunk(
+      tileMap, chunkPos.tileChunkX, chunkPos.tileChunkY, chunkPos.tileChunkZ);
 
   assert(tileChunk);
+  if (!tileChunk->tiles) {
+    uint32 tileCount = tileMap->chunkDim * tileMap->chunkDim;
+    tileChunk->tiles = pushArray(arena, tileCount, uint32);
+    for (uint32 tileIndex = 0; tileIndex < tileCount; ++tileIndex) {
+      tileChunk->tiles[tileIndex] = 1;
+    }
+  }
 
   setTileValue(tileMap, tileChunk, chunkPos.relTileX, chunkPos.relTileY,
                tileValue);

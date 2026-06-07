@@ -40,15 +40,33 @@ inline game_controller_input *getController(game_input *input,
   return result;
 }
 
-#include "handmade-intrinsics.h"
-#include "handmade-tile.h"
-
 struct memory_arena {
 
   memory_index size;
   uint8 *base;
   memory_index used;
 };
+
+internal void initializeArena(memory_arena *arena, memory_index size,
+                              uint8 *base) {
+  arena->size = size;
+  arena->base = base;
+  arena->used = 0;
+}
+
+#define pushStruct(arena, type) (type *)pushSize_(arena, sizeof(type))
+#define pushArray(arena, count, type)                                          \
+  (type *)pushSize_(arena, (count) * sizeof(type))
+void *pushSize_(memory_arena *arena, memory_index size) {
+  assert(arena->used + size <= arena->size);
+  void *result = arena->base + arena->used;
+  arena->used += size;
+
+  return result;
+}
+
+#include "handmade-intrinsics.h"
+#include "handmade-tile.h"
 
 struct world {
   tile_map *tileMap;
