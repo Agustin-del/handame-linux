@@ -3,12 +3,12 @@
 #include <math.h>
 
 inline int32 roundReal32ToInt32(real32 real32) {
-  int32 result = (int32)(real32 + 0.5f);
+  int32 result = (int32)roundf(real32);
   return result;
 }
 
 inline uint32 roundReal32ToUint32(real32 real32) {
-  uint32 result = (uint32)(real32 + 0.5f);
+  uint32 result = (uint32)roundf(real32);
   return result;
 }
 

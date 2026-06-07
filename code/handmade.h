@@ -40,44 +40,24 @@ inline game_controller_input *getController(game_input *input,
   return result;
 }
 
-struct tile_chunk_position {
-  uint32 tileChunkX;
-  uint32 tileChunkY;
+#include "handmade-intrinsics.h"
+#include "handmade-tile.h"
 
-  uint32 relTileX;
-  uint32 relTileY;
-};
+struct memory_arena {
 
-struct world_position{
-  uint32 absTileX;
-  uint32 absTileY;
-
-  real32 tileRelX;
-  real32 tileRelY;
-};
-
-struct tile_chunk {
-  uint32 *tiles;
+  memory_index size;
+  uint8 *base;
+  memory_index used;
 };
 
 struct world {
-  tile_chunk *tileChunks;
-
-  uint32 chunkShift;
-  uint32 chunkMask;
-  uint32 chunkDim;
-
-  real32 tileSideInMeters;
-  int32 tileSideInPixels;
-  real32 metersToPixels;
-
-  int32 tileChunkCountX;
-  int32 tileChunkCountY;
-
+  tile_map *tileMap;
 };
 
 struct game_state {
-  world_position playerP;
+  memory_arena worldArena;
+  world *world;
+  tile_map_position playerP;
 };
 
 #define HANDMADE_H
