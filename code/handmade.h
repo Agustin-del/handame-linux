@@ -76,6 +76,7 @@ struct game_state {
   memory_arena worldArena;
   world *world;
   tile_map_position playerP;
+  uint32 *pixelPointer;
 };
 
 #define HANDMADE_H

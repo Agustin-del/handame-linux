@@ -1,3 +1,4 @@
+#include "handmade-tile.h"
 inline void recanonicalizeCoord(tile_map *tileMap, uint32 *tile,
                                 real32 *tileRel) {
 
@@ -14,8 +15,8 @@ inline tile_map_position recanonicalizePosition(tile_map *tileMap,
 
   tile_map_position result = pos;
 
-  recanonicalizeCoord(tileMap, &result.absTileX, &result.tileRelX);
-  recanonicalizeCoord(tileMap, &result.absTileY, &result.tileRelY);
+  recanonicalizeCoord(tileMap, &result.absTileX, &result.offsetX);
+  recanonicalizeCoord(tileMap, &result.absTileY, &result.offsetY);
 
   return result;
 }
@@ -104,11 +105,19 @@ internal uint32 getTileValue(tile_map *tileMap, uint32 absTileX,
   return tileChunkValue;
 }
 
+internal uint32 getTileValue(tile_map *tileMap, tile_map_position pos) {
+  uint32 tileChunkValue = getTileValue(tileMap, pos.absTileX, pos.absTileY, pos.absTileZ);
+
+  return tileChunkValue;
+}
+
 internal bool32 isTileMapPointEmpty(tile_map *tileMap,
                                     tile_map_position canPos) {
   uint32 tileChunkValue =
-      getTileValue(tileMap, canPos.absTileX, canPos.absTileY, canPos.absTileZ);
-  bool32 empty = (tileChunkValue == 1);
+      getTileValue(tileMap, canPos);
+  bool32 empty = ((tileChunkValue == 1) ||
+    (tileChunkValue == 3) ||
+    (tileChunkValue == 4));
   return empty;
 }
 
@@ -132,4 +141,9 @@ internal void setTileValue(memory_arena *arena, tile_map *tileMap,
 
   setTileValue(tileMap, tileChunk, chunkPos.relTileX, chunkPos.relTileY,
                tileValue);
+}
+
+internal bool32 areOnSameTile(tile_map_position *a, tile_map_position *b) {
+  bool32 result = ((a->absTileX == b->absTileX) && (a->absTileY == b->absTileY) && (a->absTileZ == b->absTileZ));
+  return result; 
 }

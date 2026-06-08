@@ -1,6 +1,8 @@
 #include "handmade.h"
+#include "handmade-platform.h"
 #include "handmade-random.h"
 #include "handmade-tile.cpp"
+#include <cstdio>
 
 internal void drawRectangle(game_offscreen_buffer *buffer, real32 realMinX,
                             real32 realMinY, real32 realMaxX, real32 realMaxY,
@@ -39,6 +41,38 @@ internal void drawRectangle(game_offscreen_buffer *buffer, real32 realMinX,
     }
     row += buffer->pitch;
   }
+}
+
+#pragma pack(push, 1)
+struct bitmap_header {
+  uint16 fileType;
+  uint32 fileSize;
+  uint16 reserved1;
+  uint16 reserved2;
+  uint32 bitmapOffset;
+  uint32 size;
+  int32 width;
+  int32 height;
+  uint16 planes;
+  uint16 bitsPerPixel;
+};
+#pragma pack(pop)
+
+internal uint32 *DEBUGloadBMP(thread_context *thread,
+                           debug_platform_read_entire_file *readEntireFile,
+                           char *filename) {
+  uint32 *result = 0;
+  debug_read_file_result readResult = readEntireFile(thread, filename);
+
+  if (readResult.contentsSize != 0) {
+
+    bitmap_header *header = (bitmap_header *)readResult.contents;
+    uint32 *pixels = (uint32 *)((uint8 *)readResult.contents + header->bitmapOffset);
+
+    result = pixels;
+  }
+
+  return result;
 }
 
 internal void gameOutputSound(game_state *gameState,
@@ -86,12 +120,14 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
 
   if (!memory->isInitialized) {
 
+    gameState->pixelPointer = DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+                 "data/test-background1.bmp");
     gameState->playerP.absTileX = 1;
     gameState->playerP.absTileY = 3;
     gameState->playerP.absTileZ = 0;
 
-    gameState->playerP.tileRelX = 5.0f;
-    gameState->playerP.tileRelY = 5.0f;
+    gameState->playerP.offsetX = 5.0f;
+    gameState->playerP.offsetY = 5.0f;
     initializeArena(&gameState->worldArena,
                     memory->permanentStorageSize - sizeof(game_state),
                     (uint8 *)memory->permanentStorage + sizeof(game_state));
@@ -143,7 +179,10 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
 
         randomChoice = randomNumberTable[randomNumberIndex++] % 3;
       }
+
+      bool32 createdZDoor = false;
       if (randomChoice == 2) {
+        createdZDoor = true;
         if (absTileZ == 0) {
           doorUp = true;
         } else {
@@ -188,7 +227,7 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
               tileValue = 3;
             }
 
-            if(doorDown) {
+            if (doorDown) {
 
               tileValue = 4;
             }
@@ -201,12 +240,9 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
       doorLeft = doorRight;
       doorBottom = doorTop;
 
-      if (doorUp) {
-        doorDown = true;
-        doorUp = false;
-      } else if (doorDown) {
-        doorUp = true;
-        doorDown = false;
+      if (createdZDoor) {
+        doorDown = !doorDown;
+        doorUp = !doorUp;
       } else {
         doorUp = false;
         doorDown = false;
@@ -270,22 +306,31 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
 
       tile_map_position newPlayerP = gameState->playerP;
 
-      newPlayerP.tileRelX += input->dtForFrame * dPlayerX;
-      newPlayerP.tileRelY += input->dtForFrame * dPlayerY;
+      newPlayerP.offsetX += input->dtForFrame * dPlayerX;
+      newPlayerP.offsetY += input->dtForFrame * dPlayerY;
 
       newPlayerP = recanonicalizePosition(tileMap, newPlayerP);
 
       tile_map_position playerLeft = newPlayerP;
-      playerLeft.tileRelX -= (playerWidth * 0.5f);
+      playerLeft.offsetX -= (playerWidth * 0.5f);
       playerLeft = recanonicalizePosition(tileMap, playerLeft);
 
       tile_map_position playerRight = newPlayerP;
-      playerRight.tileRelX += (playerWidth * 0.5f);
+      playerRight.offsetX += (playerWidth * 0.5f);
       playerRight = recanonicalizePosition(tileMap, playerRight);
 
       if (isTileMapPointEmpty(tileMap, newPlayerP) &&
           (isTileMapPointEmpty(tileMap, playerLeft)) &&
           (isTileMapPointEmpty(tileMap, playerRight))) {
+
+        if (!areOnSameTile(&gameState->playerP, &newPlayerP)) {
+          uint32 newTileValue = getTileValue(tileMap, newPlayerP);
+          if (newTileValue == 3) {
+            ++newPlayerP.absTileZ;
+          } else if (newTileValue == 4) {
+            --newPlayerP.absTileZ;
+          }
+        }
 
         gameState->playerP = newPlayerP;
       }
@@ -324,9 +369,9 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
 
         real32 centerX = screenCenterX +
                          ((real32)relColumn) * tileSideInPixels -
-                         metersToPixels * gameState->playerP.tileRelX;
+                         metersToPixels * gameState->playerP.offsetX;
         real32 centerY = screenCenterY - ((real32)relRow) * tileSideInPixels +
-                         metersToPixels * gameState->playerP.tileRelY;
+                         metersToPixels * gameState->playerP.offsetY;
         real32 minX = centerX - 0.5f * tileSideInPixels;
         real32 minY = centerY - 0.5f * tileSideInPixels;
         real32 maxX = centerX + 0.5f * tileSideInPixels;
@@ -346,6 +391,17 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   drawRectangle(
       buffer, playerLeft, playerTop, playerLeft + metersToPixels * playerWidth,
       playerTop + metersToPixels * playerHeight, playerR, playerG, playerB);
+#if 0
+
+  uint32 *source = gameState->pixelPointer;
+  uint32 *dest = (uint32 *)buffer->memory;
+  for(int32 y = 0; y < buffer->height; ++y) {
+    for (int32 x = 0; x < buffer->width; ++x) {
+      *dest++ = *source++;
+
+    }
+  }
+#endif
 }
 
 /*
