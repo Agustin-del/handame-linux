@@ -1,4 +1,5 @@
 #include "handmade.h"
+#include "handmade-intrinsics.h"
 #include "handmade-platform.h"
 #include "handmade-random.h"
 #include "handmade-tile.cpp"
@@ -58,21 +59,72 @@ struct bitmap_header {
 };
 #pragma pack(pop)
 
-internal uint32 *DEBUGloadBMP(thread_context *thread,
-                           debug_platform_read_entire_file *readEntireFile,
-                           char *filename) {
-  uint32 *result = 0;
+internal
+    loaded_bitmap DEBUGloadBMP(thread_context *thread,
+                               debug_platform_read_entire_file *readEntireFile,
+                               char *filename) {
+  loaded_bitmap result = {};
   debug_read_file_result readResult = readEntireFile(thread, filename);
 
   if (readResult.contentsSize != 0) {
 
     bitmap_header *header = (bitmap_header *)readResult.contents;
-    uint32 *pixels = (uint32 *)((uint8 *)readResult.contents + header->bitmapOffset);
+    uint32 *pixels =
+        (uint32 *)((uint8 *)readResult.contents + header->bitmapOffset);
 
-    result = pixels;
+    result.pixels = pixels;
+    result.width = header->width;
+    result.height = header->height;
+    // uint32 *sourceDest = pixels;
+    /*
+    for (int32 y = 0; y < header->height; ++y) {
+      for (int32 x = 0; x < header->width; ++x) {
+        *sourceDest = (*sourceDest >> 8) | (*sourceDest << 24);
+        ++sourceDest;
+      }
+    }
+    */
   }
 
   return result;
+}
+
+internal void drawBitmap(game_offscreen_buffer *buffer, loaded_bitmap *bitmap,
+                         real32 realX, real32 realY) {
+
+  int32 minX = roundReal32ToInt32(realX);
+  int32 minY = roundReal32ToInt32(realY);
+  int32 maxX = roundReal32ToInt32(realX + (real32)bitmap->width);
+  int32 maxY = roundReal32ToInt32(realY + (real32)bitmap->height);
+
+  if (minX < 0) {
+    minX = 0;
+  }
+  if (minY < 0) {
+    minY = 0;
+  }
+
+  if (maxX > buffer->width) {
+    maxX = buffer->width;
+  }
+
+  if (maxY > buffer->height) {
+    maxY = buffer->height;
+  }
+
+  uint32 *sourceRow = bitmap->pixels + bitmap->width * (bitmap->height - 1);
+  uint8 *destRow = (uint8 *)buffer->memory + (buffer->pitch * minY) +
+                   buffer->bytesPerPixel * minX;
+  for (int32 y = minY; y < maxY; ++y) {
+    uint32 *dest = (uint32 *)destRow;
+    uint32 *source = sourceRow;
+    for (int32 x = minX; x < maxX; ++x) {
+      *dest++ = *source++;
+    }
+
+    destRow += buffer->pitch;
+    sourceRow -= bitmap->width;
+  }
 }
 
 internal void gameOutputSound(game_state *gameState,
@@ -120,8 +172,12 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
 
   if (!memory->isInitialized) {
 
-    gameState->pixelPointer = DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
-                 "data/test-background1.bmp");
+    gameState->backdrop =
+        DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+                     "data/test-background1.bmp");
+    gameState->heroHead =
+        DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+                     "data/cabeza-frente.bmp");
     gameState->playerP.absTileX = 1;
     gameState->playerP.absTileY = 3;
     gameState->playerP.absTileZ = 0;
@@ -337,8 +393,7 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
     }
   }
 
-  drawRectangle(buffer, 0.0f, 0.0f, buffer->width, buffer->height, 1.0f, 0.0f,
-                1.0f);
+  drawBitmap(buffer, &gameState->backdrop, 0, 0);
 
   real32 screenCenterX = (real32)buffer->width * 0.5f;
   real32 screenCenterY = (real32)buffer->height * 0.5f;
@@ -350,7 +405,7 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
       uint32 row = relRow + gameState->playerP.absTileY;
       uint32 tileID =
           getTileValue(tileMap, column, row, gameState->playerP.absTileZ);
-      if (tileID > 0) {
+      if (tileID > 1) {
 
         real32 gray = 0.5f;
 
@@ -391,17 +446,8 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
   drawRectangle(
       buffer, playerLeft, playerTop, playerLeft + metersToPixels * playerWidth,
       playerTop + metersToPixels * playerHeight, playerR, playerG, playerB);
-#if 0
 
-  uint32 *source = gameState->pixelPointer;
-  uint32 *dest = (uint32 *)buffer->memory;
-  for(int32 y = 0; y < buffer->height; ++y) {
-    for (int32 x = 0; x < buffer->width; ++x) {
-      *dest++ = *source++;
-
-    }
-  }
-#endif
+  drawBitmap(buffer, &gameState->heroHead, playerLeft, playerTop);
 }
 
 /*
