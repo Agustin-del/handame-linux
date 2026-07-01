@@ -38,5 +38,33 @@ inline real32 aTan2(real32 y, real32 x){
   return result;
 }
 */
+
+struct bit_scan_result {
+  bool32 found;
+  uint32 index;
+};
+
+inline bit_scan_result findLeastSignificantSetBit(uint32 value) {
+
+  bit_scan_result result = {};
+#if defined(COMPILER_LLVM)
+  if (value) {
+    result.found = true;
+
+    result.index = __builtin_ctz(value);
+  }
+#else
+    for (uint32 test = 0; test < 32; ++test) {
+      if (value & (1 << test)) {
+        result.index = test;
+        result.found = true;
+        break;
+      } else {
+      }
+    }
+#endif
+  return result;
+}
+
 #define HANDMADE_INTRINSICS
 #endif

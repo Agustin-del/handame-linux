@@ -7,6 +7,24 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
+#ifndef COMPILER_MSVC
+#define COMPILER_MSVC 0
+#endif
+
+#ifndef COMPILER_LLVM
+#define COMPILER_LLVM 0
+#endif
+
+#if !COMPILER_MSVC && !COMPILER_LLVM
+#if __clang__
+#undef COMPILER_LLVM
+#define COMPILER_LLVM 1
+#else 
+#undef COMCOMPILER_MSVC
+#define COMPILER_MSVC 1
+#endif
+#endif
+
 typedef float real32;
 typedef double real64;
 

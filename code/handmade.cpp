@@ -3,7 +3,6 @@
 #include "handmade-platform.h"
 #include "handmade-random.h"
 #include "handmade-tile.cpp"
-#include <cstdio>
 
 internal void drawRectangle(game_offscreen_buffer *buffer, real32 realMinX,
                             real32 realMinY, real32 realMaxX, real32 realMaxY,
@@ -56,6 +55,16 @@ struct bitmap_header {
   int32 height;
   uint16 planes;
   uint16 bitsPerPixel;
+  uint32 compression;
+  uint32 sizeOfBitmap;
+  int32 horzResolution;
+  int32 vertResolution;
+  uint32 colorsUsed;
+  uint32 colorsImportant;
+
+  uint32 redMask;
+  uint32 greenMask;
+  uint32 blueMask;
 };
 #pragma pack(pop)
 
@@ -75,15 +84,36 @@ internal
     result.pixels = pixels;
     result.width = header->width;
     result.height = header->height;
-    // uint32 *sourceDest = pixels;
-    /*
+
+    assert(header->compression == 3);
+
+    uint32 redMask = header->redMask;
+    uint32 greenMask = header->greenMask;
+    uint32 blueMask = header->blueMask;
+    uint32 alphaMask =
+        ~(header->redMask | header->greenMask | header->blueMask);
+
+    bit_scan_result redShift = findLeastSignificantSetBit(redMask);
+    bit_scan_result greenShift = findLeastSignificantSetBit(greenMask);
+    bit_scan_result blueShift = findLeastSignificantSetBit(blueMask);
+    bit_scan_result alphaShift = findLeastSignificantSetBit(alphaMask);
+
+    assert(redShift.found);
+    assert(greenShift.found);
+    assert(blueShift.found);
+    assert(alphaShift.found);
+
+    uint32 *sourceDest = pixels;
+
     for (int32 y = 0; y < header->height; ++y) {
       for (int32 x = 0; x < header->width; ++x) {
-        *sourceDest = (*sourceDest >> 8) | (*sourceDest << 24);
-        ++sourceDest;
+        uint32 C = *sourceDest;
+        *sourceDest++ = ((((C >> alphaShift.index) & 0xFF) << 24) |
+                         (((C >> redShift.index) & 0xFF) << 16) |
+                         (((C >> greenShift.index) & 0xFF) << 8) |
+                         (((C >> blueShift.index) & 0xFF) << 0));
       }
     }
-    */
   }
 
   return result;
@@ -119,7 +149,24 @@ internal void drawBitmap(game_offscreen_buffer *buffer, loaded_bitmap *bitmap,
     uint32 *dest = (uint32 *)destRow;
     uint32 *source = sourceRow;
     for (int32 x = minX; x < maxX; ++x) {
-      *dest++ = *source++;
+      real32 a = (real32)((*source >> 24) & 0xFF) / 255.0f;
+      real32 sR = (real32)((*source >> 16) & 0xFF);
+      real32 sG = (real32)((*source >> 8) & 0xFF);
+      real32 sB = (real32)((*source >> 0) & 0xFF);
+
+      real32 dR = (real32)((*dest >> 16) & 0xFF);
+      real32 dG = (real32)((*dest >> 8) & 0xFF);
+      real32 dB = (real32)((*dest >> 0) & 0xFF);
+
+      real32 r = (1.0f - a) * dR + a * sR;
+      real32 g = (1.0f - a) * dG + a * sG;
+      real32 b = (1.0f - a) * dB + a * sB;
+
+      *dest = (((uint32)(r + 0.5f) << 16) |
+            ((uint32)(g + 0.5f) << 8)|
+            ((uint32)(b + 0.5f) << 0));
+      ++dest;
+      ++source;
     }
 
     destRow += buffer->pitch;
@@ -177,7 +224,7 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
                      "data/test-background1.bmp");
     gameState->heroHead =
         DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
-                     "data/cabeza-frente.bmp");
+                     "data/test-hero-front-head.bmp");
     gameState->playerP.absTileX = 1;
     gameState->playerP.absTileY = 3;
     gameState->playerP.absTileZ = 0;
