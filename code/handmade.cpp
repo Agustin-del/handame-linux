@@ -222,9 +222,36 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
     gameState->backdrop =
         DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
                      "data/test-background1.bmp");
-    gameState->heroHead =
+
+
+    /*
+       gameState->heroBitmaps[0].head =
+       DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+       "data/test-hero-right-head.bmp");
+       gameState->heroBitmaps[0].torso =
+       DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+       "../data/test-hero-right-body.bmp");
+    gameState->heroBitmaps[1].head =
         DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
-                     "data/test-hero-front-head.bmp");
+                     "data/test-hero-back-head.bmp");
+    gameState->heroBitmaps[1].torso =
+        DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+                     "../data/test-hero-back-body.bmp");
+
+    gameState->heroBitmaps[2].head =
+        DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+                     "data/test-hero-left-head.bmp");
+    gameState->heroBitmaps[2].torso =
+        DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+                     "../data/test-hero-left-body.bmp");
+
+                     */
+    gameState->heroBitmaps[0].head =
+      DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+          "data/test-hero-front-head.bmp");
+    gameState->heroBitmaps[0].torso =
+      DEBUGloadBMP(thread, memory->DEBUGPlatformReadEntireFile,
+          "data/test-hero-front-body.bmp");
     gameState->playerP.absTileX = 1;
     gameState->playerP.absTileY = 3;
     gameState->playerP.absTileZ = 0;
@@ -387,17 +414,22 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
 
       if (controller->moveUp.endedDown) {
         dPlayerY = 1.0f;
+        gameState->heroFacingDirection = 1;
       }
       if (controller->moveDown.endedDown) {
         dPlayerY = -1.0f;
+        gameState->heroFacingDirection = 3;
       }
 
       if (controller->moveLeft.endedDown) {
         dPlayerX = -1.0f;
+        gameState->heroFacingDirection = 2;
       }
 
       if (controller->moveRight.endedDown) {
         dPlayerX = 1.0f;
+
+        gameState->heroFacingDirection = 0;
       }
       real32 playerSpeed = 2.0f;
 
@@ -494,7 +526,9 @@ extern "C" GAME_UPDATE_AND_RENDER(gameUpdateAndRender) {
       buffer, playerLeft, playerTop, playerLeft + metersToPixels * playerWidth,
       playerTop + metersToPixels * playerHeight, playerR, playerG, playerB);
 
-  drawBitmap(buffer, &gameState->heroHead, playerLeft, playerTop);
+  hero_bitmaps *heroBitmaps = &gameState->heroBitmaps[gameState->heroFacingDirection];
+  drawBitmap(buffer, &heroBitmaps->torso, playerLeft, playerTop);
+  drawBitmap(buffer, &heroBitmaps->head, playerLeft, playerTop);
 }
 
 /*

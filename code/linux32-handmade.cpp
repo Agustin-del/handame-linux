@@ -267,7 +267,9 @@ DEBUG_PLATFORM_WRITE_ENTIRE_FILE(DEBUGPlatformWriteEntireFile) {
   bool32 result = false;
   int fd = creat(filename, 0644);
   if (fd > 0) {
-    int wCount = write(fd, memory, memorySize);
+    uint32 wCount = write(fd, memory, memorySize);
+    if(wCount != memorySize) {
+    } 
     result = ((uint32)wCount == memorySize);
     close(fd);
   } else {
@@ -377,7 +379,10 @@ internal void linux32EndRecordingInput(linux32_state *linux32State) {
 
 internal void linux32RecordingInput(linux32_state *linux32State,
                                     game_input *newInput) {
-  write(linux32State->recordingFD, newInput, sizeof(*newInput));
+  
+  uint32 sizeInput = sizeof(*newInput);
+  uint32 n = write(linux32State->recordingFD, newInput, sizeInput);
+  if (n != sizeInput) {}
 }
 
 internal void linux32BeginInputPlayback(linux32_state *linux32State,
@@ -892,9 +897,10 @@ int main() {
         uint64 endCycleCount = __rdtsc();
         uint64 cyclesElapsed = endCycleCount - lastCycleCount;
         if (endCycleCount < lastCycleCount || cyclesElapsed > 100000000) {
-          int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n",
+          uint32 len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, skipped\n",
                             msPerFrame, FPS);
-          write(2, textBuffer, len);
+          uint32 n = write(2, textBuffer, len);
+          if (n != len){}
           lastCycleCount = endCycleCount;
           lastCounter = endCounter;
           continue;
@@ -902,9 +908,10 @@ int main() {
 
         real32 MCPF = ((real32)cyclesElapsed) / (1000.0f * 1000.0f);
 
-        int len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n",
+        uint32 len = sprintf(textBuffer, "%.2fms/f, %.2ff/s, %.2fmc/f\n",
                           msPerFrame, FPS, MCPF);
-        write(2, textBuffer, len);
+        uint32 n = write(2, textBuffer, len);
+        if (n != len){}
 
         lastCycleCount = endCycleCount;
 
